@@ -20,6 +20,10 @@ using big_int = mpz_class;
 using big_int = ssize_t;
 #endif
 
+namespace nc {
+#include <curses.h>
+}
+
 #include <range/v3/algorithm.hpp>
 #include <range/v3/view.hpp>
 
@@ -31,5 +35,4 @@ namespace v = r::views;
 size_t operator""_s(unsigned long long p) { return static_cast<size_t>(p); }
 
 #include <_graph.hpp>
-#include <_screen.hpp>
 #include <_random.hpp>
