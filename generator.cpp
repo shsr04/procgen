@@ -5,11 +5,18 @@
 using grid = vector<vector<char>>;
 using layers = vector<grid>;
 
+enum color_ident : short {
+    WHITE_ON_BLACK = 0,
+    CYAN_ON_BLACK = 1,
+};
+
 struct tile {
     char symbol;
     double prob;
     bool passable;
     string description = "";
+    color_ident color = WHITE_ON_BLACK;
+    nc::chtype attr = A_NORMAL;
 };
 
 tile const wall_tile = {'#', 0, false};
@@ -44,6 +51,7 @@ vector<tile> const room_tiles = {
         0.1,
         0,
         "stone pillar",
+        CYAN_ON_BLACK,
     },
     wall_tile,
     doorway_tile,
@@ -201,21 +209,34 @@ bool is_passable(grid const &grid, plane_coord coord,
         ->passable;
 }
 
-void print_grid(layers const &_grid, nc::WINDOW *win) {
+void print_grid(layers const &_grid, vector<tile> const &tiles,
+                nc::WINDOW *win) {
     using namespace nc;
     for (auto &grid : _grid)
         for (auto y : v::iota(0_s, grid.size()))
-            for (auto x : v::iota(0_s, grid.size()))
-                if (grid[y][x] != 0)
-                    mvwaddch(win, y, x, grid[y][x]);
+            for (auto x : v::iota(0_s, grid.size())) {
+                if (grid[y][x] == 0)
+                    continue;
+                if (auto tile = r::find_if(tiles,
+                                           [sym = grid[y][x]](auto &x) {
+                                               return sym == x.symbol;
+                                           });
+                    tile != tiles.end())
+                    wattr_set(win, tile->attr, tile->color, NULL);
+                mvwaddch(win, y, x, grid[y][x]);
+            }
 }
 
 void build_room() {
     random_gen rand;
     auto const size = rand.get(10, 20) + 5;
     nc::initscr();
+    nc::start_color();
+    nc::init_pair(WHITE_ON_BLACK, COLOR_WHITE, COLOR_BLACK);
+    nc::init_pair(CYAN_ON_BLACK, COLOR_CYAN, COLOR_BLACK);
     auto *win = nc::newwin(size, size, 0, 0);
     auto *info = nc::newwin(2, size, size + 1, 0);
+    nc::wattr_set(info, A_NORMAL, WHITE_ON_BLACK, NULL);
     nc::wrefresh(win);
     nc::wrefresh(info);
     nc::keypad(win, true);
@@ -229,7 +250,7 @@ void build_room() {
                        empty_grid(size)};
 
     auto pos = plane_coord(size / 2, size / 2, size - 1, 0);
-    print_grid(grid, win);
+    print_grid(grid, room_tiles, win);
     wprintw(info, "TEST ---");
 
     while (true) {
@@ -256,7 +277,7 @@ void build_room() {
         }
         nc::wclear(win);
         nc::wclear(info);
-        print_grid(grid, win);
+        print_grid(grid, room_tiles, win);
         nc::wrefresh(win);
         mvwprintw(
             info, 0, 0,
