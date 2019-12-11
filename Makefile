@@ -1,6 +1,6 @@
 IncludeFlags = -I third-party/range-v3/include -I core
 LibFlags =
-Libs = -lncurses
+Libs = -lncurses -lpthread
 DefFlags = 
 
 ifeq ($(bigint),1)
