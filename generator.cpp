@@ -8,53 +8,62 @@ using layers = vector<grid>;
 enum color_ident : short {
     WHITE_ON_BLACK = 0,
     CYAN_ON_BLACK = 1,
+    MAGENTA_ON_BLUE = 2,
 };
 
 struct tile {
+    enum class flag_bits : char {
+        none = 0b0,
+        passable = 0b1,
+        special = 0b10,
+    };
     char symbol;
     double prob;
-    bool passable;
+    flag_bits flags;
     string description = "";
     color_ident color = WHITE_ON_BLACK;
     nc::chtype attr = A_NORMAL;
 };
 
-tile const wall_tile = {'#', 0, false};
-tile const doorway_tile = {' ', 0, true};
+tile const wall_tile = {'#', 0, tile::flag_bits::none};
+tile const doorway_tile = {' ', 0, tile::flag_bits::passable};
+tile const chest_tile = {'?', 0, tile::flag_bits::special, "a mysterious chest",
+                         MAGENTA_ON_BLUE};
 vector<tile> const room_tiles = {
     {
         '"',
         0.3,
-        1,
+        tile::flag_bits::passable,
         "small pile of rubble",
     },
     {
         '.',
         0.3,
-        1,
+        tile::flag_bits::passable,
         "stone floor",
     },
     {
         ',',
         0.2,
-        1,
+        tile::flag_bits::passable,
         "cracked stone floor",
     },
     {
         '~',
         0.1,
-        1,
+        tile::flag_bits::passable,
         "decorated stone floor",
     },
     {
         'O',
         0.1,
-        0,
+        tile::flag_bits::none,
         "stone pillar",
         CYAN_ON_BLACK,
     },
     wall_tile,
     doorway_tile,
+    chest_tile,
 };
 
 string tile_description(char sym, vector<tile> const &tiles) {
@@ -174,13 +183,23 @@ grid random_grid(random_gen &rand, int size, vector<tile> const &tiles) {
 
 grid empty_grid(int size) { return grid(size, grid::value_type(size)); }
 
-vector<wall_coord> random_wall_coords(random_gen &rand, int count, int lim_u) {
+vector<wall_coord> random_wall_coords(random_gen &rand, int count, int max_u) {
     auto door_side = side::LEFT;
     vector<wall_coord> r;
-    generate_n(back_inserter(r), count, [&rand, &lim_u, &door_side]() {
-        auto r = wall_coord{door_side, rand.get(5, lim_u - 5)};
+    generate_n(back_inserter(r), count, [&rand, &max_u, &door_side]() {
+        auto r = wall_coord{door_side, rand.get(5, max_u - 5)};
         door_side = next_side(door_side);
         return r;
+    });
+    return r;
+}
+
+vector<plane_coord> random_plane_coords(random_gen &rand, int count, int max_xy,
+                                        int min_xy) {
+    vector<plane_coord> r;
+    generate_n(back_inserter(r), count, [&rand, &max_xy, &min_xy]() {
+        return plane_coord{rand.get(min_xy, max_xy), rand.get(min_xy, max_xy),
+                           max_xy, min_xy};
     });
     return r;
 }
@@ -202,11 +221,11 @@ grid replace_coords(grid grid, vector<plane_coord> coords, char symbol) {
     return grid;
 }
 
-bool is_passable(grid const &grid, plane_coord coord,
-                 vector<tile> const &tiles) {
+bool tile_satisfies_flags(grid const &grid, plane_coord const &coord,
+                          vector<tile> const &tiles, tile::flag_bits flags) {
     auto sym = grid[coord.y()][coord.x()];
-    return r::find_if(tiles, [sym](auto &x) { return x.symbol == sym; })
-        ->passable;
+    auto tile = r::find_if(tiles, [sym](auto &x) { return x.symbol == sym; });
+    return static_cast<char>(tile->flags) & static_cast<char>(flags);
 }
 
 void print_grid(layers const &_grid, vector<tile> const &tiles,
@@ -234,6 +253,7 @@ void build_room() {
     nc::start_color();
     nc::init_pair(WHITE_ON_BLACK, COLOR_WHITE, COLOR_BLACK);
     nc::init_pair(CYAN_ON_BLACK, COLOR_CYAN, COLOR_BLACK);
+    nc::init_pair(MAGENTA_ON_BLUE, COLOR_MAGENTA, COLOR_BLUE);
     auto *win = nc::newwin(size, size, 0, 0);
     auto *info = nc::newwin(2, size, size + 1, 0);
     nc::wattr_set(info, A_NORMAL, WHITE_ON_BLACK, NULL);
@@ -245,9 +265,12 @@ void build_room() {
 
     auto doors = to_plane_coords(random_wall_coords(rand, rand.get(2, 6), size),
                                  size - 1, 0);
-    auto grid = layers{replace_coords(random_grid(rand, size, room_tiles),
+    auto chests = random_plane_coords(rand, rand.get(0, 2), size - 1, 1);
+    auto grid = layers{
+        replace_coords(replace_coords(random_grid(rand, size, room_tiles),
                                       doors, doorway_tile.symbol),
-                       empty_grid(size)};
+                       chests, chest_tile.symbol),
+        empty_grid(size)};
 
     auto pos = plane_coord(size / 2, size / 2, size - 1, 0);
     print_grid(grid, room_tiles, win);
@@ -268,7 +291,14 @@ void build_room() {
             break;
 
         if (pos != prev) {
-            if (!is_passable(grid[0], pos, room_tiles)) {
+            if (tile_satisfies_flags(grid[0], pos, room_tiles,
+                                     tile::flag_bits::special)) {
+                nc::wclear(info);
+                mvwprintw(info, 0, 0, "(Press 'e' to open chest)");
+                nc::wrefresh(info);
+            }
+            if (!tile_satisfies_flags(grid[0], pos, room_tiles,
+                                      tile::flag_bits::passable)) {
                 pos = prev;
                 continue;
             }
