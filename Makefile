@@ -1,6 +1,6 @@
 IncludeFlags = -I third-party/range-v3/include -I core
 LibFlags =
-Libs = -lncurses -lpthread
+Libs = -lncurses
 DefFlags = 
 
 ifeq ($(bigint),1)
@@ -16,4 +16,4 @@ compile_commands.json:
 	bear make $(patsubst %.cpp, %, $(wildcard *.cpp)) -B
 
 %: %.cpp
-	clang++ -std=c++17 -Werror -g -Ofast $(IncludeFlags) $(LibFlags) $(DefFlags) -o $@ $^ $(Libs)
+	clang++ -std=c++17 -Werror -Wconversion -g -O0 $(IncludeFlags) $(LibFlags) $(DefFlags) -o $@ $^ $(Libs)

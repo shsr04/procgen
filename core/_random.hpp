@@ -8,7 +8,7 @@ public:
     auto dist = uniform_int_distribution<I>(from, to);
     return dist(rand_);
   }
-  auto get_real(double from=numeric_limits<double>::min(), size_t to=numeric_limits<double>::max()) {
+  auto get_real(double from=numeric_limits<double>::min(), double to=numeric_limits<double>::max()) {
     auto dist = uniform_real_distribution<double>(from, to);
     return dist(rand_);
   }
