@@ -1,7 +1,9 @@
 #include <_main.hpp>
-#include <algorithm>
+namespace nc {
+extern "C" {
 #include <curses.h>
-#include <random>
+}
+} // namespace nc
 
 using nat = unsigned long long; // C++ guarantees >=64 bits for ULL
 using sig = signed long long;
@@ -13,9 +15,10 @@ enum color_ident : short {
     GREEN_ON_WHITE = 3,
 };
 
+#include "tile.hpp"
+
 #include "coord.hpp"
 #include "grid.hpp"
-#include "tile.hpp"
 
 vector<pair<tile::idents, double>> room_tile_probs = {
     {tile::idents::stone_rubble_pile, 0.3},
@@ -24,10 +27,6 @@ vector<pair<tile::idents, double>> room_tile_probs = {
     {tile::idents::decorated_stone_flooring, 0.1},
     {tile::idents::stone_pillar, 0.1},
 };
-char const wall_symbol = all_tiles.at(tile::idents::wall).symbol,
-           doorway_symbol = all_tiles.at(tile::idents::doorway).symbol,
-           chest_symbol = all_tiles.at(tile::idents::chest).symbol,
-           player_symbol = all_tiles.at(tile::idents::player).symbol;
 
 template <class T>
 optional<T> choose_random(random_gen &r, vector<pair<T, double>> const &v) {
@@ -42,32 +41,36 @@ optional<T> choose_random(random_gen &r, vector<pair<T, double>> const &v) {
 
 grid random_grid(random_gen &rand, sig _size,
                  map<tile::idents, tile> const &tiles) {
+    using ti = tile::idents;
     auto size = static_cast<size_t>(_size);
-    vector<vector<char>> grid(size, vector<char>());
-    grid[0] = grid.back() = vector<char>(size, wall_symbol);
+    vector<vector<ti>> grid(size, vector<ti>(0));
+    grid[0] = grid.back() = vector<ti>(size, ti::wall);
     for (auto i_row : v::iota(1_s, size - 1)) {
-        grid[i_row].push_back(wall_symbol);
+        grid[i_row].push_back(ti::wall);
         for (auto i_col : v::iota(1_s, size - 1)) {
-            grid[i_row].push_back(
-                all_tiles.at(*choose_random(rand, room_tile_probs)).symbol);
+            grid[i_row].push_back(*choose_random(rand, room_tile_probs));
         }
-        grid[i_row].push_back(wall_symbol);
+        grid[i_row].push_back(ti::wall);
     }
     return grid;
 }
 
 grid empty_grid(sig size) {
-    return {vector<vector<char>>(size_t(size), vector<char>(size_t(size)))};
+    return vector<vector<tile::idents>>(
+        size_t(size), vector<tile::idents>(size_t(size), tile::idents::nil));
 }
 
 vector<wall_coord> random_wall_coords(random_gen &rand, sig count, sig max_u,
                                       sig min_u) {
     auto door_side = side::LEFT;
     vector<wall_coord> r;
-    generate_n(back_inserter(r), count, [&rand, &max_u, &min_u, &door_side]() {
-        auto r = wall_coord{door_side, rand.get(min_u, max_u)};
+    generate_n(back_inserter(r), count, [&]() {
+        auto c = wall_coord(door_side, rand.get(min_u, max_u), max_u);
+        while (find(begin(r), end(r), c) != end(r)) {
+            c.u() = rand.get(min_u, max_u);
+        }
         door_side = next_side(door_side);
-        return r;
+        return c;
     });
     return r;
 }
@@ -86,13 +89,13 @@ vector<plane_coord> to_plane_coords(vector<wall_coord> p, sig max_xy,
                                     sig min_xy) {
     vector<plane_coord> r;
     for (auto &&w : p) {
-        // cout << w;
         r.push_back(w.to_plane(max_xy, min_xy));
     }
     return r;
 }
 
-grid replace_coords(grid grid, vector<plane_coord> coords, char symbol) {
+grid replace_coords(grid grid, vector<plane_coord> coords,
+                    tile::idents symbol) {
     for (auto &&c : coords) {
         grid[c] = symbol;
     }
@@ -117,10 +120,9 @@ pair<vector<plane_coord>, grid> add_random_doorways(random_gen &rand, grid grid,
                       --x.y();
                   return x;
               });
-    auto grid1 = replace_coords(move(grid), doors, doorway_symbol);
+    auto grid1 = replace_coords(move(grid), doors, tile::idents::doorway);
     auto grid2 =
-        replace_coords(move(grid1), door_sigils,
-                       all_tiles.at(tile::idents::doorway_sigil).symbol);
+        replace_coords(move(grid1), door_sigils, tile::idents::doorway_sigil);
     return {move(doors), move(grid2)};
 }
 
@@ -167,14 +169,13 @@ string get_description(grid const &grid, map<tile::idents, tile> const &tiles,
 
 void print_grid(layers const &layers, map<tile::idents, tile> const &tiles,
                 nc::WINDOW *win) {
-    using namespace nc;
     for (auto &grid : layers)
         for (auto &c : grid) {
-            if (grid[c] == 0)
+            if (grid[c] == tile::idents::nil)
                 continue;
-            auto tile = tiles.at(static_cast<tile::idents>(grid[c]));
-            wattr_set(win, tile.attr, tile.color, NULL);
-            mvwaddch(win, c.y(), c.x(), grid[c]);
+            auto tile = tiles.at(grid[c]);
+            nc::wattr_set(win, tile.attr, tile.color, NULL);
+            mvwaddch(win, c.y(), c.x(), tile.symbol);
         }
 }
 
@@ -184,7 +185,7 @@ optional<plane_coord> display_room(layers grid,
                                    nc::WINDOW *info_view,
                                    plane_coord player_pos, string room_title) {
     auto interaction_point = optional<plane_coord>();
-    grid[1][player_pos] = player_symbol;
+    grid[1][player_pos] = tile::idents::player;
     print_grid(grid, all_tiles, room_view);
     wprintw(info_view, ("--- " + room_title + "---").c_str());
     nc::wrefresh(main_win);
@@ -199,6 +200,8 @@ optional<plane_coord> display_room(layers grid,
             --player_pos.x();
         else if (c == 'd')
             ++player_pos.x();
+        else if (c == 'e' && interaction_point)
+            /*TODO: get item*/;
         else if (c == 'q')
             return {};
         else if (c == KEY_RESIZE)
@@ -223,8 +226,8 @@ optional<plane_coord> display_room(layers grid,
             return player_pos;
         }
 
-        grid[1][prev] = 0;
-        grid[1][player_pos] = player_symbol;
+        grid[1][prev] = tile::idents::nil;
+        grid[1][player_pos] = tile::idents::player;
 
         nc::wclear(main_win);
         print_grid(grid, all_tiles, room_view);
@@ -245,7 +248,7 @@ pair<layers, vector<plane_coord>> build_room(random_gen &rand, sig grid_size) {
         add_random_doorways(rand, random_grid(rand, grid_size, all_tiles),
                             static_cast<sig>(rand.get(2, 6)));
     return {
-        layers{replace_coords(move(bottom_grid), chest_coords, chest_symbol),
+        layers{replace_coords(move(bottom_grid), chest_coords, tile::idents::chest),
                empty_grid(grid_size)},
         move(door_coords)};
 }
@@ -262,8 +265,11 @@ int main() {
     nc::init_pair(MAGENTA_ON_BLUE, COLOR_MAGENTA, COLOR_BLUE);
     nc::init_pair(GREEN_ON_WHITE, COLOR_GREEN, COLOR_WHITE);
     auto *main_win = nc::newwin(window_size, window_size, 0, 0);
+    nc::leaveok(main_win, TRUE);
+    nc::scrollok(main_win, TRUE);
     nc::wattr_set(main_win, A_NORMAL, WHITE_ON_BLACK, NULL);
     nc::keypad(main_win, true);
+
     auto seed = random_device()();
     auto room_id = sig(0);
     auto latest_visited_room = optional<sig>();

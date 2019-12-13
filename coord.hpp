@@ -66,26 +66,37 @@ side next_side(side p) {
     return static_cast<side>((static_cast<sig>(p) + 1) % 4);
 }
 
-struct wall_coord {
-    side s;
-    sig u;
-    bool operator==(wall_coord const &p) const { return s == p.s && u == p.u; }
+class wall_coord {
+    sig max_;
+    limited_val u_;
+    side side_;
+
+  public:
+    wall_coord(side side, sig u, sig max_u)
+        : max_(max_u), u_(u, max_, 0), side_(side) {}
+    auto &u() { return u_; }
+    auto &u() const { return u_; }
+    auto side() const { return side_; }
+    bool operator==(wall_coord const &p) const {
+        return side_ == p.side_ && u_ == p.u_;
+    }
+
     plane_coord to_plane(sig max_xy, sig min_xy) const {
-        switch (s) {
+        switch (side_) {
         case side::LEFT:
-            return {0, u, max_xy, min_xy};
+            return {0, u_, max_xy, min_xy};
         case side::RIGHT:
-            return {max_xy, u, max_xy, min_xy};
+            return {max_xy, u_, max_xy, min_xy};
         case side::UP:
-            return {u, 0, max_xy, min_xy};
+            return {u_, 0, max_xy, min_xy};
         case side::DOWN:
-            return {u, max_xy, max_xy, min_xy};
+            return {u_, max_xy, max_xy, min_xy};
         }
     }
 };
 ostream &operator<<(ostream &o, wall_coord p) {
     char c = 0;
-    switch (p.s) {
+    switch (p.side()) {
     case side::LEFT:
         c = 'L';
         break;
@@ -99,6 +110,6 @@ ostream &operator<<(ostream &o, wall_coord p) {
         c = 'D';
         break;
     }
-    o << "(" << c << "," << p.u << ")";
+    o << "(" << c << "," << p.u() << ")";
     return o;
 }

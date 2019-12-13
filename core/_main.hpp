@@ -21,10 +21,6 @@ using big_int = mpz_class;
 using big_int = ssize_t;
 #endif
 
-namespace nc {
-#include <curses.h>
-}
-
 #include <range/v3/algorithm.hpp>
 #include <range/v3/view.hpp>
 

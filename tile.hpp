@@ -6,6 +6,7 @@ struct tile {
         flag_bits() = delete;
     };
     enum class idents : char {
+        nil = 0,
         wall = '#',
         doorway = ' ',
         doorway_sigil = 'D',

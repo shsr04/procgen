@@ -1,5 +1,5 @@
 class grid {
-    vector<vector<char>> layers_;
+    vector<vector<tile::idents>> layers_;
     class row_ref {
         vector<char> &row_;
 
