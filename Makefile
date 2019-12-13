@@ -15,5 +15,5 @@ compile_commands.json:
 	echo --- Rebuilding $@ ---
 	bear make $(patsubst %.cpp, %, $(wildcard *.cpp)) -B
 
-%: %.cpp
-	clang++ -std=c++17 -Werror -Wconversion -g -O0 $(IncludeFlags) $(LibFlags) $(DefFlags) -o $@ $^ $(Libs)
+%: %.cpp $(wildcard *.hpp)
+	clang++ -std=c++17 -Werror -Wconversion -Wmove -g -O0 $(IncludeFlags) $(LibFlags) $(DefFlags) -o $@ $< $(Libs)
