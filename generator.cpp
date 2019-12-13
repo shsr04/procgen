@@ -1,5 +1,7 @@
 #include <_main.hpp>
+#include <algorithm>
 #include <curses.h>
+#include <random>
 
 using nat = unsigned long long; // C++ guarantees >=64 bits for ULL
 using sig = signed long long;
@@ -12,6 +14,7 @@ enum color_ident : short {
 };
 
 #include "coord.hpp"
+#include "grid.hpp"
 #include "tile.hpp"
 
 vector<pair<tile::idents, double>> room_tile_probs = {
@@ -25,59 +28,6 @@ char const wall_symbol = all_tiles.at(tile::idents::wall).symbol,
            doorway_symbol = all_tiles.at(tile::idents::doorway).symbol,
            chest_symbol = all_tiles.at(tile::idents::chest).symbol,
            player_symbol = all_tiles.at(tile::idents::player).symbol;
-
-class grid {
-    vector<vector<char>> layers_;
-    class row_ref {
-        vector<char> &row_;
-
-      public:
-        template <class R>
-        row_ref(R &row) : row_(const_cast<decltype(row_)>(row)) {}
-        operator decltype(row_) &() { return row_; }
-        auto &operator[](sig j) { return row_[static_cast<size_t>(j)]; }
-        auto &operator[](sig j) const { return row_[static_cast<size_t>(j)]; }
-    };
-    class grid_iterator {
-        plane_coord pos_;
-        sig max_;
-
-      public:
-        grid_iterator(sig x, sig y, sig max_xy)
-            : pos_(x, y, max_xy, 0), max_(max_xy) {}
-        auto operator++() {
-            if (pos_.x() == max_)
-                pos_.x() = 0, ++pos_.y();
-            else
-                ++pos_.x();
-            return *this;
-        }
-        auto &operator*() { return pos_; }
-        auto operator!=(grid_iterator const &p) const { return pos_ != p.pos_; }
-    };
-
-  public:
-    grid(decltype(layers_) layers) : layers_(layers) {}
-    auto operator[](plane_coord const &p) const {
-        return layers_[size_t(p.y())][size_t(p.x())];
-    }
-    auto &operator[](plane_coord const &p) {
-        return layers_[size_t(p.y())][size_t(p.x())];
-    }
-    auto operator[](pair<sig, sig> p) const {
-        return operator[](plane_coord(p.first, p.second, size() - 1, 0));
-    }
-    auto &operator[](pair<sig, sig> p) {
-        return operator[](plane_coord(p.first, p.second, size() - 1, 0));
-    }
-    auto begin() { return grid_iterator(0, 0, sig(layers_.size()) - 1); };
-    auto end() {
-        return grid_iterator(sig(layers_.size()) - 1, sig(layers_.size()) - 1,
-                             sig(layers_.size()) - 1);
-    }
-    sig size() const { return static_cast<sig>(layers_.size()); }
-};
-using layers = vector<grid>;
 
 template <class T>
 optional<T> choose_random(random_gen &r, vector<pair<T, double>> const &v) {
@@ -200,17 +150,18 @@ optional<plane_coord> find_adjoining_tile(grid const &grid,
 }
 
 string get_description(grid const &grid, map<tile::idents, tile> const &tiles,
+                       map<plane_coord, sig> const &out_doors,
                        plane_coord const &coord) {
     auto ident = static_cast<tile::idents>(grid[coord]);
     auto desc = tiles.at(ident).description;
     if (tile_satisfies_flags(grid, tiles, coord, tile::flag_bits::interactable))
         return "(Press e to interact with " + desc + ")";
     if (ident == tile::idents::doorway)
-        return "Door to ...";
+        return "Door to room " + to_string(out_doors.at(coord));
     if (auto o_door =
             find_adjoining_tile(grid, tiles, coord, tile::idents::doorway);
         ident == tile::idents::doorway_sigil && o_door)
-        return get_description(grid, tiles, *o_door);
+        return get_description(grid, tiles, out_doors, *o_door);
     return desc;
 }
 
@@ -218,102 +169,140 @@ void print_grid(layers const &layers, map<tile::idents, tile> const &tiles,
                 nc::WINDOW *win) {
     using namespace nc;
     for (auto &grid : layers)
-        for (auto y : v::iota(0, grid.size()))
-            for (auto x : v::iota(0, grid.size())) {
-                auto c = plane_coord(x, y, 0, grid.size());
-                if (grid[c] == 0)
-                    continue;
-                auto tile = tiles.at(static_cast<tile::idents>(grid[c]));
-                wattr_set(win, tile.attr, tile.color, NULL);
-                mvwaddch(win, y, x, grid[c]);
-            }
+        for (auto &c : grid) {
+            if (grid[c] == 0)
+                continue;
+            auto tile = tiles.at(static_cast<tile::idents>(grid[c]));
+            wattr_set(win, tile.attr, tile.color, NULL);
+            mvwaddch(win, c.y(), c.x(), grid[c]);
+        }
 }
 
-void build_room() {
-    random_gen rand;
-    auto const size = sig(rand.get(10, 20) + 5);
-    nc::initscr();
-    nc::start_color();
-    nc::init_pair(WHITE_ON_BLACK, COLOR_WHITE, COLOR_BLACK);
-    nc::init_pair(CYAN_ON_BLACK, COLOR_CYAN, COLOR_BLACK);
-    nc::init_pair(MAGENTA_ON_BLUE, COLOR_MAGENTA, COLOR_BLUE);
-    nc::init_pair(GREEN_ON_WHITE, COLOR_GREEN, COLOR_WHITE);
-    auto *main_win = nc::newwin(int(size) + 2, int(size) + 2, 0, 0);
-    nc::wattr_set(main_win, A_NORMAL, WHITE_ON_BLACK, NULL);
-    auto *room_view = nc::subwin(main_win, int(size), int(size), 0, 0);
-    auto *info_view = nc::subwin(main_win, 1, int(size), int(size) + 1, 0);
-    nc::keypad(main_win, true);
-    nc::noecho();
-    nc::cbreak();
-    nc::curs_set(0);
-
-    auto c_chests = random_plane_coords(rand, static_cast<sig>(rand.get(0, 2)),
-                                        size - 2, 1);
-
-    auto &&[c_doors, bottom_grid] =
-        add_random_doorways(rand, random_grid(rand, size, all_tiles),
-                            static_cast<sig>(rand.get(2, 6)));
-    auto grid =
-        layers{replace_coords(move(bottom_grid), c_chests, chest_symbol),
-               empty_grid(size)};
-
-    auto pos = plane_coord(size / 2, size / 2, size - 1, 0);
+optional<plane_coord> display_room(layers grid,
+                                   map<plane_coord, sig> const &out_doors,
+                                   nc::WINDOW *main_win, nc::WINDOW *room_view,
+                                   nc::WINDOW *info_view,
+                                   plane_coord player_pos, string room_title) {
     auto interaction_point = optional<plane_coord>();
+    grid[1][player_pos] = player_symbol;
     print_grid(grid, all_tiles, room_view);
-    wprintw(info_view, "--- Welcome ---");
+    wprintw(info_view, ("--- " + room_title + "---").c_str());
     nc::wrefresh(main_win);
     while (true) {
         auto c = nc::wgetch(main_win);
-        auto prev = pos;
+        auto prev = player_pos;
         if (c == 'w')
-            --pos.y();
+            --player_pos.y();
         else if (c == 's')
-            ++pos.y();
+            ++player_pos.y();
         else if (c == 'a')
-            --pos.x();
+            --player_pos.x();
         else if (c == 'd')
-            ++pos.x();
+            ++player_pos.x();
         else if (c == 'q')
-            break;
+            return {};
         else if (c == KEY_RESIZE)
             nc::wrefresh(main_win);
 
-        if (pos == prev)
+        if (player_pos == prev)
             continue;
 
-        if (tile_satisfies_flags(grid[0], all_tiles, pos,
+        if (tile_satisfies_flags(grid[0], all_tiles, player_pos,
                                  tile::flag_bits::interactable))
-            interaction_point = pos;
+            interaction_point = player_pos;
         else
             interaction_point = {};
-        if (!tile_satisfies_flags(grid[0], all_tiles, pos,
+        if (!tile_satisfies_flags(grid[0], all_tiles, player_pos,
                                   tile::flag_bits::passable)) {
-            pos = prev;
+            player_pos = prev;
             if (!interaction_point)
                 continue;
         }
-        if (tile_satisfies_flags(grid[0], all_tiles, pos,
+        if (tile_satisfies_flags(grid[0], all_tiles, player_pos,
                                  tile::flag_bits::transporting)) {
-            nc::wclear(main_win);
-            print_grid(grid, all_tiles, room_view);
-            nc::mvwprintw(info_view, 0, 0, "TELEPORTING...");
-            nc::wrefresh(main_win);
-            continue;
+            return player_pos;
         }
 
         grid[1][prev] = 0;
-        grid[1][pos] = player_symbol;
+        grid[1][player_pos] = player_symbol;
 
         nc::wclear(main_win);
         print_grid(grid, all_tiles, room_view);
-        auto described_coord = interaction_point ? *interaction_point : pos;
-        auto descr =get_description(grid[0], all_tiles, described_coord);
+        auto described_coord =
+            interaction_point ? *interaction_point : player_pos;
+        auto descr =
+            get_description(grid[0], all_tiles, out_doors, described_coord);
         mvwprintw(info_view, 0, 0, descr.c_str());
         // nc::wmove(room_view, int(pos.y()), int(pos.x()));
         nc::wrefresh(main_win);
     }
+}
+
+pair<layers, vector<plane_coord>> build_room(random_gen &rand, sig grid_size) {
+    auto chest_coords = random_plane_coords(
+        rand, static_cast<sig>(rand.get(0, 2)), grid_size - 2, 1);
+    auto &&[door_coords, bottom_grid] =
+        add_random_doorways(rand, random_grid(rand, grid_size, all_tiles),
+                            static_cast<sig>(rand.get(2, 6)));
+    return {
+        layers{replace_coords(move(bottom_grid), chest_coords, chest_symbol),
+               empty_grid(grid_size)},
+        move(door_coords)};
+}
+
+int main() {
+    auto const window_size = 40;
+    nc::initscr();
+    nc::start_color();
+    nc::noecho();
+    nc::cbreak();
+    nc::curs_set(0);
+    nc::init_pair(WHITE_ON_BLACK, COLOR_WHITE, COLOR_BLACK);
+    nc::init_pair(CYAN_ON_BLACK, COLOR_CYAN, COLOR_BLACK);
+    nc::init_pair(MAGENTA_ON_BLUE, COLOR_MAGENTA, COLOR_BLUE);
+    nc::init_pair(GREEN_ON_WHITE, COLOR_GREEN, COLOR_WHITE);
+    auto *main_win = nc::newwin(window_size, window_size, 0, 0);
+    nc::wattr_set(main_win, A_NORMAL, WHITE_ON_BLACK, NULL);
+    nc::keypad(main_win, true);
+    auto seed = random_device()();
+    auto room_id = sig(0);
+    auto latest_visited_room = optional<sig>();
+    auto next_free_room = sig(1);
+    map<sig, map<plane_coord, sig>> room_network;
+    while (true) {
+        random_gen rand(seed + static_cast<decltype(seed)>(room_id));
+        auto const grid_size =
+            sig(rand.get(window_size / 3, window_size / 2) + 5);
+        auto *room_view =
+            nc::subwin(main_win, int(grid_size), int(grid_size), 0, 0);
+        auto *info_view =
+            nc::subwin(main_win, 1, int(grid_size), int(grid_size) + 1, 0);
+
+        nc::wclear(main_win);
+        auto &&[grid, doors] = build_room(rand, grid_size);
+        auto player_pos = plane_coord(grid[0].size() / 2, grid[0].size() / 2,
+                                      grid[0].size() - 1, 0);
+        if (latest_visited_room) {
+            room_network[room_id][doors.back()] = *latest_visited_room;
+            player_pos = *find_adjoining_tile(grid[0], all_tiles, doors.back(),
+                                              tile::idents::doorway_sigil);
+            doors.pop_back();
+        }
+        for (auto &c_door : doors) {
+            room_network[room_id][c_door] = next_free_room;
+            next_free_room++;
+        }
+        auto exit_door =
+            display_room(grid, room_network[room_id], main_win, room_view,
+                         info_view, player_pos, "Room " + to_string(room_id));
+        nc::delwin(room_view);
+        nc::delwin(info_view);
+        if (!exit_door)
+            break;
+        latest_visited_room = room_id;
+        room_id = room_network.at(room_id).at(*exit_door);
+    }
+
     nc::delwin(main_win);
     nc::endwin();
 }
-
-int main() { build_room(); }

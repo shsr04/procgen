@@ -1,9 +1,10 @@
 class limited_val {
-    sig val_;
     sig min_, max_;
+    sig val_;
 
   public:
-    limited_val(sig val, sig max, sig min) : val_(val), min_(min), max_(max) {}
+    limited_val(sig val, sig max, sig min)
+        : min_(min), max_(max), val_(clamp(val, min_, max_)) {}
     operator sig() const { return val_; }
     auto operator=(sig x) {
         val_ = x;
@@ -39,8 +40,7 @@ class plane_coord {
 
   public:
     plane_coord(sig x, sig y, sig max_xy, sig min_xy)
-        : min_(min_xy), max_(max_xy), x_(x, max_, min_),
-          y_(y, max_, min_) {}
+        : min_(min_xy), max_(max_xy), x_(x, max_, min_), y_(y, max_, min_) {}
     auto &x() { return x_; }
     auto &x() const { return x_; }
     auto &y() { return y_; }
@@ -49,6 +49,12 @@ class plane_coord {
         return x_ == p.x_ && y_ == p.y_;
     }
     bool operator!=(plane_coord const &p) const { return !(operator==(p)); }
+    bool operator<(plane_coord const &p) const {
+        if (x() != p.x())
+            return x() < p.x();
+        else
+            return y() < p.y();
+    }
 };
 ostream &operator<<(ostream &o, plane_coord p) {
     o << "(" << p.x() << "," << p.y() << ")";
