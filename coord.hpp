@@ -80,6 +80,7 @@ class wall_coord {
     bool operator==(wall_coord const &p) const {
         return side_ == p.side_ && u_ == p.u_;
     }
+    bool operator<(wall_coord const &p) const {return u_ < p.u_;}
 
     plane_coord to_plane(sig max_xy, sig min_xy) const {
         switch (side_) {
