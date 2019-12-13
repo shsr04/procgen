@@ -1,8 +1,8 @@
 class random_gen {
-    std::mt19937_64 rand_;
+    mt19937_64 rand_;
 
   public:
-    random_gen(std::mt19937_64::result_type seed) : rand_(seed) {}
+    random_gen(mt19937_64::result_type seed) : rand_(seed) {}
     template <class I>
     auto get(I from = numeric_limits<I>::min(),
              I to = numeric_limits<I>::max()) {
@@ -14,4 +14,7 @@ class random_gen {
         auto dist = uniform_real_distribution<double>(from, to);
         return dist(rand_);
     }
+    auto operator()() { return get<mt19937_64::result_type>(); }
+    auto min() const { return rand_.min(); }
+    auto max() const { return rand_.max(); }
 };

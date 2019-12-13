@@ -26,7 +26,7 @@ struct tile {
     nc::chtype attr = A_NORMAL;
 };
 
-map<tile::idents, tile> const all_tiles = {
+map<tile::idents, tile> const ALL_TILES = {
     {tile::idents::stone_rubble_pile,
      {
          '"',

@@ -1,4 +1,5 @@
 #include <_main.hpp>
+#include <random>
 namespace nc {
 extern "C" {
 #include <curses.h>
@@ -21,35 +22,30 @@ enum color_ident : short {
 #include "coord.hpp"
 #include "grid.hpp"
 
-vector<pair<tile::idents, double>> room_tile_probs = {
-    {tile::idents::stone_rubble_pile, 0.3},
-    {tile::idents::stone_flooring, 0.3},
-    {tile::idents::cracked_stone_flooring, 0.2},
-    {tile::idents::decorated_stone_flooring, 0.1},
-    {tile::idents::stone_pillar, 0.1},
+vector<pair<tile::idents, double>> const ROOM_TILE_WEIGHTS = {
+    {tile::idents::stone_rubble_pile, 60},
+    {tile::idents::stone_flooring, 100},
+    {tile::idents::cracked_stone_flooring, 40},
+    {tile::idents::decorated_stone_flooring, 30},
+    {tile::idents::stone_pillar, 2},
 };
-
-template <class T>
-optional<T> choose_random(random_gen &r, vector<pair<T, double>> const &v) {
-    double limit = 0.;
-    for (auto &[t, p] : v) {
-        limit += p;
-        if (r.get_real(0., 1.) < limit)
-            return t;
-    }
-    return {};
-}
 
 grid random_grid(random_gen &rand, sig _size,
                  map<tile::idents, tile> const &tiles) {
     using ti = tile::idents;
     auto size = static_cast<size_t>(_size);
+
+    vector<double> tile_weights;
+    for (auto &[t, w] : ROOM_TILE_WEIGHTS)
+        tile_weights.push_back(w);
+    discrete_distribution<size_t> dist(begin(tile_weights), end(tile_weights));
+
     vector<vector<ti>> grid(size, vector<ti>(0));
     grid[0] = grid.back() = vector<ti>(size, ti::wall);
     for (auto i_row : v::iota(1_s, size - 1)) {
         grid[i_row].push_back(ti::wall);
         for (auto i_col : v::iota(1_s, size - 1)) {
-            grid[i_row].push_back(*choose_random(rand, room_tile_probs));
+            grid[i_row].push_back(ROOM_TILE_WEIGHTS[dist(rand)].first);
         }
         grid[i_row].push_back(ti::wall);
     }
@@ -222,7 +218,7 @@ optional<plane_coord> display_room(layers grid,
                                    plane_coord player_pos, string room_title) {
     auto interaction_point = optional<plane_coord>();
     grid[1][player_pos] = tile::idents::player;
-    print_grid(grid, all_tiles, out_doors, room_view);
+    print_grid(grid, ALL_TILES, out_doors, room_view);
     nc::mvwprintw(info_view, 0, 0, ("--- " + room_title + "---").c_str());
     nc::wrefresh(main_win);
     while (true) {
@@ -237,7 +233,7 @@ optional<plane_coord> display_room(layers grid,
         else if (c == 'd')
             ++player_pos.x();
         else if (c == 'e' && interaction_point) {
-            interact_with(grid[0], all_tiles, *interaction_point, info_view);
+            interact_with(grid[0], ALL_TILES, *interaction_point, info_view);
             continue;
         } else if (c == 'q')
             return {};
@@ -247,18 +243,18 @@ optional<plane_coord> display_room(layers grid,
         if (player_pos == prev)
             continue;
 
-        if (tile_satisfies_flags(grid[0], all_tiles, player_pos,
+        if (tile_satisfies_flags(grid[0], ALL_TILES, player_pos,
                                  tile::flag_bits::interactable))
             interaction_point = player_pos;
         else
             interaction_point = {};
-        if (!tile_satisfies_flags(grid[0], all_tiles, player_pos,
+        if (!tile_satisfies_flags(grid[0], ALL_TILES, player_pos,
                                   tile::flag_bits::passable)) {
             player_pos = prev;
             if (!interaction_point)
                 continue;
         }
-        if (tile_satisfies_flags(grid[0], all_tiles, player_pos,
+        if (tile_satisfies_flags(grid[0], ALL_TILES, player_pos,
                                  tile::flag_bits::transporting)) {
             return player_pos;
         }
@@ -267,11 +263,11 @@ optional<plane_coord> display_room(layers grid,
         grid[1][player_pos] = tile::idents::player;
 
         nc::wclear(main_win);
-        print_grid(grid, all_tiles, out_doors, room_view);
+        print_grid(grid, ALL_TILES, out_doors, room_view);
         auto described_coord =
             interaction_point ? *interaction_point : player_pos;
         auto descr =
-            get_description(grid[0], all_tiles, out_doors, described_coord);
+            get_description(grid[0], ALL_TILES, out_doors, described_coord);
         mvwprintw(info_view, 0, 0, descr.c_str());
         // nc::wmove(room_view, int(pos.y()), int(pos.x()));
         nc::wrefresh(main_win);
@@ -282,7 +278,7 @@ pair<layers, vector<plane_coord>> build_room(random_gen &rand, sig grid_size) {
     auto chest_coords = random_plane_coords(
         rand, static_cast<sig>(rand.get(0, 2)), grid_size - 2, 1);
     auto &&[door_coords, bottom_grid] =
-        add_random_doorways(rand, random_grid(rand, grid_size, all_tiles),
+        add_random_doorways(rand, random_grid(rand, grid_size, ALL_TILES),
                             static_cast<sig>(rand.get(2, 6)));
     return {layers{replace_coords(move(bottom_grid), chest_coords,
                                   tile::idents::chest),
@@ -330,7 +326,7 @@ int main() {
         if (latest_visited_room) {
             room_network[room_id][doors.back()] = *latest_visited_room;
             grid[0][doors.back()] = tile::idents::sliding_door;
-            player_pos = *find_adjoining_tile(grid[0], all_tiles, doors.back(),
+            player_pos = *find_adjoining_tile(grid[0], ALL_TILES, doors.back(),
                                               tile::idents::doorway_sigil);
             doors.pop_back();
         }

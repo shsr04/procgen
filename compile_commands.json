@@ -5,6 +5,27 @@
             "-c",
             "-std=c++17",
             "-Werror",
+            "-Wconversion",
+            "-Wmove",
+            "-g",
+            "-O0",
+            "-I",
+            "third-party/range-v3/include",
+            "-I",
+            "core",
+            "-o",
+            "generator",
+            "generator.cpp"
+        ],
+        "directory": "/home/simon/Documents/Code/cpp/proc",
+        "file": "generator.cpp"
+    },
+    {
+        "arguments": [
+            "clang++",
+            "-c",
+            "-std=c++17",
+            "-Werror",
             "-g",
             "-Ofast",
             "-I",
