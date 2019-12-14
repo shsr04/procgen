@@ -14,7 +14,7 @@ class random_gen {
         auto dist = uniform_real_distribution<double>(from, to);
         return dist(rand_);
     }
-    auto operator()() { return get<mt19937_64::result_type>(); }
-    auto min() const { return rand_.min(); }
-    auto max() const { return rand_.max(); }
+    auto operator()() { return rand_(); }
+    static constexpr auto min() { return decltype(rand_)::min(); }
+    static constexpr auto max() { return decltype(rand_)::max(); }
 };

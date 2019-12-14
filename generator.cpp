@@ -1,5 +1,4 @@
 #include <_main.hpp>
-#include <random>
 namespace nc {
 extern "C" {
 #include <curses.h>
@@ -42,9 +41,10 @@ grid random_grid(random_gen &rand, sig _size,
 
     vector<vector<ti>> grid(size, vector<ti>(0));
     grid[0] = grid.back() = vector<ti>(size, ti::wall);
-    for (auto i_row : v::iota(1_s, size - 1)) {
+    auto i=nums(1,10); 
+    for (auto i_row : nums(1_s, size - 1)) {
         grid[i_row].push_back(ti::wall);
-        for (auto i_col : v::iota(1_s, size - 1)) {
+        for (auto i_col : nums(1_s, size - 1)) {
             grid[i_row].push_back(ROOM_TILE_WEIGHTS[dist(rand)].first);
         }
         grid[i_row].push_back(ti::wall);

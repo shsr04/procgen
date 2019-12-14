@@ -1,4 +1,5 @@
-IncludeFlags = -I third-party/range-v3/include -I core
+CompileFlags = -std=c++17 -g -O0 -stdlib=libc++ -Werror -Wconversion -Wmove 
+IncludeFlags = -I third-party -I core
 LibFlags =
 Libs = -lncurses
 DefFlags = 
@@ -16,4 +17,4 @@ compile_commands.json:
 	bear make $(patsubst %.cpp, %, $(wildcard *.cpp)) -B
 
 %: %.cpp $(wildcard *.hpp)
-	clang++ -std=c++17 -Werror -Wconversion -Wmove -g -O0 $(IncludeFlags) $(LibFlags) $(DefFlags) -o $@ $< $(Libs)
+	clang++ $(CompileFlags) $(IncludeFlags) $(LibFlags) $(DefFlags) -o $@ $< $(Libs)
