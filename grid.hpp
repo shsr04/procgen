@@ -1,3 +1,8 @@
+#pragma once
+#include <_main.hpp>
+#include "coord.hpp"
+#include "tile.hpp"
+
 class grid {
     vector<vector<tile::idents>> layers_;
     class row_ref {

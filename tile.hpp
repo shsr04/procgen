@@ -1,8 +1,12 @@
+#pragma once
+#include "color.hpp"
+#include <_main.hpp>
 
 struct tile {
     struct flag_bits {
         static sig const none = 0b0, passable = 0b1, interactable = 0b10,
-                         transporting = 0b100, shape_changing = 0b1000;
+                         transporting = 0b100, shape_changing = 0b1000,
+                         damaging = 1 << 4;
         flag_bits() = delete;
     };
     struct attr_bits {
@@ -22,12 +26,23 @@ struct tile {
         decorated_stone_flooring,
         stone_pillar,
         player,
+        dart_trap,
+        propelled_dart,
     };
     char symbol;
     sig flags;
     string description;
-    pair<SDL_Color,SDL_Color> color = color_ident::WHITE_ON_BLACK;
+    pair<SDL_Color, SDL_Color> color = color_idents::WHITE_ON_BLACK;
     sig attr = attr_bits::none;
+};
+
+vector<pair<tile::idents, double>> const ROOM_TILE_WEIGHTS = {
+    {tile::idents::stone_rubble_pile, 60},
+    {tile::idents::stone_flooring, 100},
+    {tile::idents::cracked_stone_flooring, 40},
+    {tile::idents::decorated_stone_flooring, 30},
+    {tile::idents::stone_pillar, 2},
+    {tile::idents::dart_trap, 2},
 };
 
 map<tile::idents, tile> const ALL_TILES = {
@@ -60,7 +75,7 @@ map<tile::idents, tile> const ALL_TILES = {
          'O',
          tile::flag_bits::none,
          "stone pillar",
-         color_ident::CYAN_ON_BLACK,
+         color_idents::CYAN_ON_BLACK,
      }},
     {tile::idents::wall,
      {
@@ -77,27 +92,41 @@ map<tile::idents, tile> const ALL_TILES = {
          'D',
          tile::flag_bits::passable | tile::flag_bits::shape_changing,
          "",
-         color_ident::RED_ON_BLACK,
+         color_idents::RED_ON_BLACK,
+     }},
+    {tile::idents::dart_trap,
+     {
+         '#',
+         tile::flag_bits::none,
+         "A devious trap",
+         color_idents::WHITE_ON_BLACK,
      }},
     {tile::idents::sliding_door,
      {
          '#',
          tile::flag_bits::interactable,
          "sliding door",
-         color_ident::RED_ON_BLACK,
+         color_idents::RED_ON_BLACK,
      }},
     {tile::idents::chest,
      {
          '?',
          tile::flag_bits::interactable,
          "mysterious chest",
-         color_ident::MAGENTA_ON_BLUE,
+         color_idents::MAGENTA_ON_BLUE,
      }},
     {tile::idents::player,
      {
          '*',
          tile::flag_bits::none,
          "Player character",
-         color_ident::GREEN_ON_WHITE,
+         color_idents::GREEN_ON_WHITE,
+     }},
+    {tile::idents::propelled_dart,
+     {
+         '`',
+         tile::flag_bits::damaging,
+         "",
+         color_idents::RED_ON_BLACK,
      }},
 };

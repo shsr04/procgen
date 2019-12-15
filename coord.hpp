@@ -1,3 +1,6 @@
+#pragma once
+#include <_main.hpp>
+
 class limited_val {
     sig min_, max_;
     sig val_;
@@ -6,6 +9,7 @@ class limited_val {
     limited_val(sig val, sig max, sig min)
         : min_(min), max_(max), val_(clamp(val, min_, max_)) {}
     operator sig() const { return val_; }
+    auto limit_reached() const { return val_ == max_ || val_ == min_; }
     auto operator=(sig x) {
         val_ = x;
         return *this;
@@ -80,7 +84,7 @@ class wall_coord {
     bool operator==(wall_coord const &p) const {
         return side_ == p.side_ && u_ == p.u_;
     }
-    bool operator<(wall_coord const &p) const {return u_ < p.u_;}
+    bool operator<(wall_coord const &p) const { return u_ < p.u_; }
 
     plane_coord to_plane(sig max_xy, sig min_xy) const {
         switch (side_) {
@@ -113,4 +117,13 @@ ostream &operator<<(ostream &o, wall_coord p) {
     }
     o << "(" << c << "," << p.u() << ")";
     return o;
+}
+
+vector<plane_coord> to_plane_coords(vector<wall_coord> p, sig max_xy,
+                                    sig min_xy) {
+    vector<plane_coord> r;
+    for (auto &&w : p) {
+        r.push_back(w.to_plane(max_xy, min_xy));
+    }
+    return r;
 }

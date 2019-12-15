@@ -1,26 +1,22 @@
 #pragma once
 #include <array>
-#include <bitset>
-#include <deque>
+#include <atomic>
+#include <chrono>
 #include <fstream>
 #include <functional>
 #include <iostream>
 #include <map>
-#include <memory>
 #include <optional>
 #include <queue>
 #include <random>
 #include <rangeless/include/fn.hpp>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
-#ifdef USE_GMP
-#include <gmpxx.h>
-using big_int = mpz_class;
-#else
-using big_int = ssize_t;
-#endif
+using nat = unsigned long long; // C++ guarantees >=64 bits for ULL
+using sig = signed long long;
 
 using namespace std;
 namespace f = rangeless::fn;

@@ -1,127 +1,15 @@
-#include "sdl_wrap_header.hpp"
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_keycode.h>
-#include <SDL2/SDL_pixels.h>
-#include <SDL2/SDL_ttf.h>
-#include <SDL2/SDL_video.h>
+#include <SDL2/SDL_events.h>
 #include <_main.hpp>
+#include <chrono>
 #include <sdl_wrap.hpp>
+#include <thread>
 
-using nat = unsigned long long; // C++ guarantees >=64 bits for ULL
-using sig = signed long long;
-
-struct color_ident {
-    static constexpr pair<SDL_Color, SDL_Color>
-        WHITE_ON_BLACK = {{255, 255, 255}, {0, 0, 0}},
-        CYAN_ON_BLACK = {{0, 255, 255}, {0, 0, 0}},
-        MAGENTA_ON_BLUE = {{255, 0, 255}, {0, 0, 255}},
-        GREEN_ON_WHITE = {{0, 255, 0}, {255, 255, 255}},
-        RED_ON_BLACK = {{255, 0, 0}, {0, 0, 0}};
-    color_ident() = delete;
-};
-
-#include "tile.hpp"
-
+#include "builder.hpp"
 #include "coord.hpp"
 #include "grid.hpp"
+#include "tile.hpp"
 
-vector<pair<tile::idents, double>> const ROOM_TILE_WEIGHTS = {
-    {tile::idents::stone_rubble_pile, 60},
-    {tile::idents::stone_flooring, 100},
-    {tile::idents::cracked_stone_flooring, 40},
-    {tile::idents::decorated_stone_flooring, 30},
-    {tile::idents::stone_pillar, 2},
-};
-
-grid random_grid(random_gen &rand, sig _size,
-                 map<tile::idents, tile> const &tiles) {
-    using ti = tile::idents;
-    auto size = static_cast<size_t>(_size);
-
-    vector<double> tile_weights;
-    for (auto &[t, w] : ROOM_TILE_WEIGHTS)
-        tile_weights.push_back(w);
-    discrete_distribution<size_t> dist(begin(tile_weights), end(tile_weights));
-
-    vector<vector<ti>> grid(size, vector<ti>(0));
-    grid[0] = grid.back() = vector<ti>(size, ti::wall);
-    for (auto i_row : nums(1_s, size - 1)) {
-        grid[i_row].push_back(ti::wall);
-        for (auto i_col : nums(1_s, size - 1)) {
-            grid[i_row].push_back(ROOM_TILE_WEIGHTS[dist(rand)].first);
-        }
-        grid[i_row].push_back(ti::wall);
-    }
-    return grid;
-}
-
-grid empty_grid(sig size) {
-    return vector<vector<tile::idents>>(
-        size_t(size), vector<tile::idents>(size_t(size), tile::idents::nil));
-}
-
-vector<wall_coord> random_wall_coords(random_gen &rand, sig count, sig max_u,
-                                      sig min_u) {
-    auto door_side = side::LEFT;
-    set<wall_coord> r;
-    generate_n(inserter(r, begin(r)), count, [&]() {
-        auto c = wall_coord(door_side, rand.get(min_u, max_u), max_u);
-        door_side = next_side(door_side);
-        return c;
-    });
-    return vector<wall_coord>(begin(r), end(r));
-}
-
-vector<plane_coord> random_plane_coords(random_gen &rand, sig count, sig max_xy,
-                                        sig min_xy) {
-    vector<plane_coord> r;
-    generate_n(back_inserter(r), count, [&rand, &max_xy, &min_xy]() {
-        return plane_coord{rand.get(min_xy, max_xy), rand.get(min_xy, max_xy),
-                           max_xy, min_xy};
-    });
-    return r;
-}
-
-vector<plane_coord> to_plane_coords(vector<wall_coord> p, sig max_xy,
-                                    sig min_xy) {
-    vector<plane_coord> r;
-    for (auto &&w : p) {
-        r.push_back(w.to_plane(max_xy, min_xy));
-    }
-    return r;
-}
-
-grid replace_coords(grid grid, vector<plane_coord> coords,
-                    tile::idents symbol) {
-    for (auto &&c : coords) {
-        grid[c] = symbol;
-    }
-    return grid;
-}
-
-pair<vector<plane_coord>, grid> add_random_doorways(random_gen &rand, grid grid,
-                                                    sig count) {
-    sig max_coord = grid.size() - 1;
-    auto doors = to_plane_coords(
-        random_wall_coords(rand, count, max_coord - 1, 1), max_coord, 0);
-    auto door_sigils = vector<plane_coord>();
-    transform(cbegin(doors), cend(doors), back_inserter(door_sigils),
-              [&max_coord](auto x) {
-                  if (x.x() == 0)
-                      ++x.x();
-                  else if (x.x() == max_coord)
-                      --x.x();
-                  if (x.y() == 0)
-                      ++x.y();
-                  else if (x.y() == max_coord)
-                      --x.y();
-                  return x;
-              });
-    auto grid1 = replace_coords(move(grid), doors, tile::idents::doorway);
-    auto grid2 =
-        replace_coords(move(grid1), door_sigils, tile::idents::doorway_sigil);
-    return {move(doors), move(grid2)};
-}
+sig const FRAMES_PER_SECOND = 24;
 
 bool tile_satisfies_flags(grid const &grid,
                           map<tile::idents, tile> const &tiles,
@@ -242,94 +130,176 @@ void print_grid(layers const &layers, map<tile::idents, tile> const &tiles,
         }
 }
 
+struct hazard {
+    enum class idents {
+        dart_trap,
+    };
+    struct behavior_bits {
+        static sig const damage = 0b1, catapult = 0b10, blaze = 0b100;
+    };
+    tile::idents tile; // needed?
+    sig behavior;
+    chrono::seconds activation_time;
+    optional<tile::idents> employed_tiles;
+
+    optional<sig> damage;
+    chrono::seconds tmp_time = 0s; // used to count up
+};
+
+map<tile::idents, hazard> ALL_HAZARDS = {
+    {tile::idents::dart_trap,
+     {
+         tile::idents::dart_trap,
+         hazard::behavior_bits::catapult,
+         5s,
+         tile::idents::propelled_dart,
+     }},
+    {tile::idents::propelled_dart,
+     {
+         tile::idents::propelled_dart,
+         hazard::behavior_bits::damage,
+         -1s,
+         {},
+         5,
+     }},
+};
+
+struct moving_object {
+    tile::idents tile;
+    plane_coord pos;
+    pair<sig, sig> vel;
+};
+
 optional<plane_coord> display_room(random_gen rand, layers grid,
                                    map<plane_coord, sig> const &out_doors,
                                    Window const &main_win,
                                    SDL_Rect const &room_view,
                                    SDL_Rect const &info_view, Font const &font,
                                    plane_coord player_pos, string room_title) {
-    auto interaction_point = optional<plane_coord>();
     grid[1][player_pos] = tile::idents::player;
-    main_win.clear({0, 0, 0});
-    print_grid(grid, ALL_TILES, out_doors, main_win, room_view, font);
-    font.renderToSurface("--- " + room_title + "---",
-                         color_ident::WHITE_ON_BLACK, main_win, info_view.x,
-                         info_view.y);
-    main_win.updateWindow();
+    auto interaction_point = optional<plane_coord>();
+    auto info_text = "--- " + room_title + "---";
+    auto active_hazards = map<plane_coord, hazard>();
+    auto moving_objects = vector<moving_object>();
+    sig life_points = 10;
+    atomic<bool> hazard_ready = false;
+    for (auto &c : grid[0]) {
+        if (ALL_HAZARDS.find(grid[0][c]) != ALL_HAZARDS.end())
+            active_hazards[c] = ALL_HAZARDS.at(grid[0][c]);
+    }
+    thread heartbeat;
+    if (!active_hazards.empty())
+        heartbeat = thread([&active_hazards, &hazard_ready] {
+            while (true) {
+                /// When a hazard is ready, its tmp_time is 0 and hazard_ready
+                /// is true.
+                this_thread::sleep_for(1s);
+                if (hazard_ready)
+                    continue;
+                for (auto &[c, a] : active_hazards) {
+                    a.tmp_time += 1s;
+                    if (a.tmp_time == a.activation_time)
+                        hazard_ready = true, a.tmp_time = 0s;
+                }
+            }
+        });
+
     while (true) {
-        SDL_Event event;
-        auto c = 0;
-        while (SDL_PollEvent(&event)) {
-            if (event.type != SDL_KEYDOWN)
-                continue;
-            c = event.key.keysym.sym;
-            break;
-        }
-        auto prev = player_pos;
-        if (c == SDLK_w)
-            --player_pos.y();
-        else if (c == SDLK_s)
-            ++player_pos.y();
-        else if (c == SDLK_a)
-            --player_pos.x();
-        else if (c == SDLK_d)
-            ++player_pos.x();
-        else if (c == SDLK_e && interaction_point) {
-            main_win.clear({0, 0, 0});
-            print_grid(grid, ALL_TILES, out_doors, main_win, room_view, font);
-            auto effect =
-                interact_with(rand, grid[0], ALL_TILES, *interaction_point);
-            font.renderToSurface(*effect.message, color_ident::WHITE_ON_BLACK,
-                                 main_win, info_view.x, info_view.y);
-            main_win.updateWindow();
-            continue;
-        } else if (c == SDLK_q)
-            return {};
-
-        if (player_pos == prev)
-            continue;
-
-        if (tile_satisfies_flags(grid[0], ALL_TILES, player_pos,
-                                 tile::flag_bits::interactable))
-            interaction_point = player_pos;
-        else
-            interaction_point = {};
-        if (!tile_satisfies_flags(grid[0], ALL_TILES, player_pos,
-                                  tile::flag_bits::passable)) {
-            player_pos = prev;
-            if (!interaction_point)
-                continue;
-        }
-        if (tile_satisfies_flags(grid[0], ALL_TILES, player_pos,
-                                 tile::flag_bits::transporting)) {
-            return player_pos;
-        }
-
-        grid[1][prev] = tile::idents::nil;
-        grid[1][player_pos] = tile::idents::player;
-
         main_win.clear({0, 0, 0});
         print_grid(grid, ALL_TILES, out_doors, main_win, room_view, font);
-        auto described_coord =
-            interaction_point ? *interaction_point : player_pos;
-        auto descr =
-            get_description(grid[0], ALL_TILES, out_doors, described_coord);
-        font.renderToSurface(descr, color_ident::WHITE_ON_BLACK, main_win,
+        font.renderToSurface(info_text, color_idents::WHITE_ON_BLACK, main_win,
                              info_view.x, info_view.y);
         main_win.updateWindow();
-    }
-}
+        if (life_points <= 0) {
+            throw "You are DEAD";
+        }
+        SDL_Event event;
+        SDL_WaitEventTimeout(&event, 1000 / FRAMES_PER_SECOND);
+        auto prev = player_pos;
+        if (event.type == SDL_KEYDOWN) {
+            auto key = event.key.keysym.sym;
+            if (key == SDLK_w)
+                --player_pos.y();
+            else if (key == SDLK_s)
+                ++player_pos.y();
+            else if (key == SDLK_a)
+                --player_pos.x();
+            else if (key == SDLK_d)
+                ++player_pos.x();
+            else if (key == SDLK_e && interaction_point) {
+                auto effect =
+                    interact_with(rand, grid[0], ALL_TILES, *interaction_point);
+                info_text = *effect.message;
+                continue;
+            } else if (key == SDLK_q)
+                return {};
+        }
 
-pair<layers, vector<plane_coord>> build_room(random_gen &rand, sig grid_size) {
-    auto chest_coords = random_plane_coords(
-        rand, static_cast<sig>(rand.get(0, 2)), grid_size - 2, 1);
-    auto &&[door_coords, bottom_grid] =
-        add_random_doorways(rand, random_grid(rand, grid_size, ALL_TILES),
-                            static_cast<sig>(rand.get(2, 6)));
-    return {layers{replace_coords(move(bottom_grid), chest_coords,
-                                  tile::idents::chest),
-                   empty_grid(grid_size)},
-            move(door_coords)};
+        if (hazard_ready) {
+            for (auto &[c, a] : active_hazards) {
+                pair<sig, sig> vel = {rand.get(-1, 1), rand.get(-1, 1)};
+                if (a.tmp_time > 0s)
+                    continue;
+                if (a.behavior & hazard::behavior_bits::catapult) {
+                    moving_objects.push_back({*a.employed_tiles, c, vel});
+                }
+            }
+            hazard_ready = false;
+        }
+
+        if (player_pos != prev) {
+            if (tile_satisfies_flags(grid[0], ALL_TILES, player_pos,
+                                     tile::flag_bits::interactable))
+                interaction_point = player_pos;
+            else
+                interaction_point = {};
+
+            if (!tile_satisfies_flags(grid[0], ALL_TILES, player_pos,
+                                      tile::flag_bits::passable)) {
+                player_pos = prev;
+                if (!interaction_point)
+                    continue;
+            }
+
+            if (tile_satisfies_flags(grid[0], ALL_TILES, player_pos,
+                                     tile::flag_bits::transporting)) {
+                return player_pos;
+            }
+
+            auto described_coord =
+                interaction_point ? *interaction_point : player_pos;
+            info_text =
+                get_description(grid[0], ALL_TILES, out_doors, described_coord);
+
+            grid[1][prev] = tile::idents::nil;
+            grid[1][player_pos] = tile::idents::player;
+        }
+
+        if (!moving_objects.empty()) {
+            for (auto &[tile, pos, vel] : moving_objects) {
+                grid[1][pos] = tile::idents::nil;
+                pos.x() = pos.x() + vel.first;
+                pos.y() = pos.y() + vel.second;
+                grid[1][pos] = tile;
+                if (pos == player_pos) {
+                    auto damage = *ALL_HAZARDS.at(tile).damage;
+                    life_points -= damage;
+                    info_text = ">> LOST " + to_string(damage) + " HP!";
+                }
+            }
+            moving_objects.erase(
+                remove_if(begin(moving_objects), end(moving_objects),
+                          [&grid](moving_object &m) {
+                              if (m.pos.x().limit_reached() ||
+                                  m.pos.y().limit_reached()) {
+                                  grid[1][m.pos] = tile::idents::nil;
+                                  return true;
+                              }
+                              return false;
+                          }),
+                end(moving_objects));
+        }
+    }
 }
 
 int main() {
@@ -352,10 +322,10 @@ int main() {
         auto const grid_size =
             sig(rand.get(window_size / 4, window_size / 3) + 5);
         /// ATTENTION: The rects should only be accessed via
-        /// font.renderToSurface()! Otherwise the actual pixel size of the font
-        /// has to be considered when drawing something "by hand". That means: a
-        /// rect of size [w,h] corresponds to an area of [w*f,h*f] pixels where
-        /// f is the main font size.
+        /// font.renderToSurface()! Otherwise the actual pixel size of the
+        /// font has to be considered when drawing something "by hand". That
+        /// means: a rect of size [w,h] corresponds to an area of [w*f,h*f]
+        /// pixels where f is the main font size.
         auto room_view =
             SDL_Rect{.x = 0, .y = 0, .w = int(grid_size), .h = int(grid_size)};
         auto info_view =
