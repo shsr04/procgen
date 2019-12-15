@@ -1,7 +1,7 @@
 CompileFlags = -std=c++17 -g -O0 -stdlib=libc++ -Werror -Wconversion -Wmove 
 IncludeFlags = -I third-party -I core
 LibFlags =
-Libs = -lncurses
+Libs = -lncurses -lSDL2 -lSDL2_ttf
 DefFlags = 
 
 ifeq ($(bigint),1)

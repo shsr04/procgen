@@ -5,6 +5,10 @@ struct tile {
                          transporting = 0b100, shape_changing = 0b1000;
         flag_bits() = delete;
     };
+    struct attr_bits {
+        static sig const none = 0b0;
+        attr_bits() = delete;
+    };
     enum class idents : char {
         nil = 0,
         wall,
@@ -22,8 +26,8 @@ struct tile {
     char symbol;
     sig flags;
     string description;
-    color_ident color = WHITE_ON_BLACK;
-    nc::chtype attr = A_NORMAL;
+    pair<SDL_Color,SDL_Color> color = color_ident::WHITE_ON_BLACK;
+    sig attr = attr_bits::none;
 };
 
 map<tile::idents, tile> const ALL_TILES = {
@@ -56,7 +60,7 @@ map<tile::idents, tile> const ALL_TILES = {
          'O',
          tile::flag_bits::none,
          "stone pillar",
-         CYAN_ON_BLACK,
+         color_ident::CYAN_ON_BLACK,
      }},
     {tile::idents::wall,
      {
@@ -73,27 +77,27 @@ map<tile::idents, tile> const ALL_TILES = {
          'D',
          tile::flag_bits::passable | tile::flag_bits::shape_changing,
          "",
-         RED_ON_BLACK,
+         color_ident::RED_ON_BLACK,
      }},
     {tile::idents::sliding_door,
      {
          '#',
          tile::flag_bits::interactable,
          "sliding door",
-         RED_ON_BLACK,
+         color_ident::RED_ON_BLACK,
      }},
     {tile::idents::chest,
      {
          '?',
          tile::flag_bits::interactable,
          "mysterious chest",
-         MAGENTA_ON_BLUE,
+         color_ident::MAGENTA_ON_BLUE,
      }},
     {tile::idents::player,
      {
          '*',
          tile::flag_bits::none,
          "Player character",
-         GREEN_ON_WHITE,
+         color_ident::GREEN_ON_WHITE,
      }},
 };

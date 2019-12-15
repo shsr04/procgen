@@ -1,23 +1,19 @@
-#include "sdl_wrap_header.hpp"
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_keycode.h>
-#include <SDL2/SDL_pixels.h>
-#include <SDL2/SDL_ttf.h>
-#include <SDL2/SDL_video.h>
 #include <_main.hpp>
-#include <sdl_wrap.hpp>
+namespace nc {
+extern "C" {
+#include <curses.h>
+}
+} // namespace nc
 
 using nat = unsigned long long; // C++ guarantees >=64 bits for ULL
 using sig = signed long long;
 
-struct color_ident {
-    static constexpr pair<SDL_Color, SDL_Color>
-        WHITE_ON_BLACK = {{255, 255, 255}, {0, 0, 0}},
-        CYAN_ON_BLACK = {{0, 255, 255}, {0, 0, 0}},
-        MAGENTA_ON_BLUE = {{255, 0, 255}, {0, 0, 255}},
-        GREEN_ON_WHITE = {{0, 255, 0}, {255, 255, 255}},
-        RED_ON_BLACK = {{255, 0, 0}, {0, 0, 0}};
-    color_ident() = delete;
+enum color_ident : short {
+    WHITE_ON_BLACK = 0,
+    CYAN_ON_BLACK = 1,
+    MAGENTA_ON_BLUE = 2,
+    GREEN_ON_WHITE = 3,
+    RED_ON_BLACK = 4,
 };
 
 #include "tile.hpp"
@@ -183,108 +179,70 @@ optional<char> get_tile_symbol(grid const &grid,
     };
 }
 
-struct item {
-    enum class idents {
-        placeholder,
-    };
-    string name;
-    sig value;
-};
-
-map<item::idents, item> ALL_ITEMS = {{item::idents::placeholder, {"***", 10}}};
-
-struct interaction_effect {
+struct effect {
     struct effect_bits {
         static sig const none = 0b0, message = 0b1, acquisition = 0b10;
         effect_bits() = delete;
     };
     sig flags;
     optional<string> message;
-    optional<item> acquired_item;
+    optional<string> acquired_item;
 };
 
-interaction_effect interact_with(random_gen &rand, grid const &grid,
-                                 map<tile::idents, tile> const &tiles,
-                                 plane_coord coord) {
+effect interact_with(grid const &grid, map<tile::idents, tile> const &tiles,
+                     plane_coord coord, nc::WINDOW *win) {
     switch (grid[coord]) {
-    case tile::idents::chest: {
-        using diff_type = decltype(ALL_ITEMS)::difference_type;
-        auto pos = ALL_ITEMS.begin();
-        item acquired =
-            (advance(pos,
-                     rand.get(diff_type(0), diff_type(ALL_ITEMS.size() - 1))),
-             pos)
-                ->second;
-        return {.flags = interaction_effect::effect_bits::message |
-                         interaction_effect::effect_bits::acquisition,
-                .message = "(Obtained " + acquired.name + "!)",
-                .acquired_item = acquired};
-    }
+    case tile::idents::chest:
+        return {effect::effect_bits::message | effect::effect_bits::acquisition,
+                "(Obtained ***!)", "***"};
     case tile::idents::sliding_door:
-        return {.flags = interaction_effect::effect_bits::message,
-                .message = "(The door is sealed.)"};
+        return {effect::effect_bits::message, "(The door is sealed.)"};
     default:
-        return {.flags = interaction_effect::effect_bits::none};
+        return {effect::effect_bits::none};
     }
 }
 
 void print_grid(layers const &layers, map<tile::idents, tile> const &tiles,
-                map<plane_coord, sig> const &doors, Window const &win,
-                SDL_Rect const &rect, Font const &font) {
+                map<plane_coord, sig> const &doors, nc::WINDOW *win) {
     for (auto &grid : layers)
         for (auto &c : grid) {
             if (grid[c] == tile::idents::nil)
                 continue;
             auto tile = tiles.at(grid[c]);
-            font.renderToSurface(
-                string({*get_tile_symbol(grid, tiles, doors, c)}), tile.color,
-                win, rect.x + int(c.x()), rect.y + int(c.y()));
+            nc::wattr_set(win, tile.attr, tile.color, NULL);
+            mvwaddch(win, c.y(), c.x(),
+                     *get_tile_symbol(grid, tiles, doors, c));
         }
 }
 
-optional<plane_coord> display_room(random_gen rand, layers grid,
+optional<plane_coord> display_room(layers grid,
                                    map<plane_coord, sig> const &out_doors,
-                                   Window const &main_win,
-                                   SDL_Rect const &room_view,
-                                   SDL_Rect const &info_view, Font const &font,
+                                   nc::WINDOW *main_win, nc::WINDOW *room_view,
+                                   nc::WINDOW *info_view,
                                    plane_coord player_pos, string room_title) {
     auto interaction_point = optional<plane_coord>();
     grid[1][player_pos] = tile::idents::player;
-    main_win.clear({0, 0, 0});
-    print_grid(grid, ALL_TILES, out_doors, main_win, room_view, font);
-    font.renderToSurface("--- " + room_title + "---",
-                         color_ident::WHITE_ON_BLACK, main_win, info_view.x,
-                         info_view.y);
-    main_win.updateWindow();
+    print_grid(grid, ALL_TILES, out_doors, room_view);
+    nc::mvwprintw(info_view, 0, 0, ("--- " + room_title + "---").c_str());
+    nc::wrefresh(main_win);
     while (true) {
-        SDL_Event event;
-        auto c = 0;
-        while (SDL_PollEvent(&event)) {
-            if (event.type != SDL_KEYDOWN)
-                continue;
-            c = event.key.keysym.sym;
-            break;
-        }
+        auto c = nc::wgetch(main_win);
         auto prev = player_pos;
-        if (c == SDLK_w)
+        if (c == 'w')
             --player_pos.y();
-        else if (c == SDLK_s)
+        else if (c == 's')
             ++player_pos.y();
-        else if (c == SDLK_a)
+        else if (c == 'a')
             --player_pos.x();
-        else if (c == SDLK_d)
+        else if (c == 'd')
             ++player_pos.x();
-        else if (c == SDLK_e && interaction_point) {
-            main_win.clear({0, 0, 0});
-            print_grid(grid, ALL_TILES, out_doors, main_win, room_view, font);
-            auto effect =
-                interact_with(rand, grid[0], ALL_TILES, *interaction_point);
-            font.renderToSurface(*effect.message, color_ident::WHITE_ON_BLACK,
-                                 main_win, info_view.x, info_view.y);
-            main_win.updateWindow();
+        else if (c == 'e' && interaction_point) {
+            interact_with(grid[0], ALL_TILES, *interaction_point, info_view);
             continue;
-        } else if (c == SDLK_q)
+        } else if (c == 'q')
             return {};
+        else if (c == KEY_RESIZE)
+            nc::wrefresh(main_win);
 
         if (player_pos == prev)
             continue;
@@ -308,15 +266,15 @@ optional<plane_coord> display_room(random_gen rand, layers grid,
         grid[1][prev] = tile::idents::nil;
         grid[1][player_pos] = tile::idents::player;
 
-        main_win.clear({0, 0, 0});
-        print_grid(grid, ALL_TILES, out_doors, main_win, room_view, font);
+        nc::wclear(main_win);
+        print_grid(grid, ALL_TILES, out_doors, room_view);
         auto described_coord =
             interaction_point ? *interaction_point : player_pos;
         auto descr =
             get_description(grid[0], ALL_TILES, out_doors, described_coord);
-        font.renderToSurface(descr, color_ident::WHITE_ON_BLACK, main_win,
-                             info_view.x, info_view.y);
-        main_win.updateWindow();
+        mvwprintw(info_view, 0, 0, descr.c_str());
+        // nc::wmove(room_view, int(pos.y()), int(pos.x()));
+        nc::wrefresh(main_win);
     }
 }
 
@@ -333,13 +291,22 @@ pair<layers, vector<plane_coord>> build_room(random_gen &rand, sig grid_size) {
 }
 
 int main() {
-    auto const window_size = 60;
-    Init _init(SDL_INIT_VIDEO);
-    assert_true(TTF_Init() == 0, "TTF init failed");
-    Font font("NotoMono-Regular.ttf", 24);
-    auto const font_size = font.height();
-    Window main_win(font_size * window_size / 2, font_size * window_size / 2,
-                    "Hello", SDL_WINDOW_INPUT_FOCUS);
+    auto const window_size = 40;
+    nc::initscr();
+    nc::start_color();
+    nc::noecho();
+    nc::cbreak();
+    nc::curs_set(0);
+    nc::init_pair(WHITE_ON_BLACK, COLOR_WHITE, COLOR_BLACK);
+    nc::init_pair(CYAN_ON_BLACK, COLOR_CYAN, COLOR_BLACK);
+    nc::init_pair(MAGENTA_ON_BLUE, COLOR_MAGENTA, COLOR_BLUE);
+    nc::init_pair(GREEN_ON_WHITE, COLOR_GREEN, COLOR_WHITE);
+    nc::init_pair(RED_ON_BLACK, COLOR_RED, COLOR_BLACK);
+    auto *main_win = nc::newwin(window_size, window_size, 0, 0);
+    nc::leaveok(main_win, TRUE);
+    nc::scrollok(main_win, TRUE);
+    nc::wattr_set(main_win, A_NORMAL, WHITE_ON_BLACK, NULL);
+    nc::keypad(main_win, true);
 
     auto seed = random_device()();
     auto room_id = sig(0);
@@ -350,18 +317,13 @@ int main() {
         room_network[room_id] = {};
         random_gen rand(seed + static_cast<decltype(seed)>(room_id));
         auto const grid_size =
-            sig(rand.get(window_size / 4, window_size / 3) + 5);
-        /// ATTENTION: The rects should only be accessed via
-        /// font.renderToSurface()! Otherwise the actual pixel size of the font
-        /// has to be considered when drawing something "by hand". That means: a
-        /// rect of size [w,h] corresponds to an area of [w*f,h*f] pixels where
-        /// f is the main font size.
-        auto room_view =
-            SDL_Rect{.x = 0, .y = 0, .w = int(grid_size), .h = int(grid_size)};
-        auto info_view =
-            SDL_Rect{.x = 0, .y = room_view.h + 1, .w = window_size, .h = 1};
+            sig(rand.get(window_size / 3, window_size / 2) + 5);
+        auto *room_view =
+            nc::subwin(main_win, int(grid_size), int(grid_size), 0, 0);
+        auto *info_view =
+            nc::subwin(main_win, 1, window_size, int(grid_size) + 1, 0);
 
-        main_win.updateWindow();
+        nc::wclear(main_win);
         auto &&[grid, doors] = build_room(rand, grid_size);
         auto player_pos = plane_coord(grid[0].size() / 2, grid[0].size() / 2,
                                       grid[0].size() - 1, 0);
@@ -376,12 +338,17 @@ int main() {
             room_network.at(room_id)[c_door] = next_free_room;
             next_free_room++;
         }
-        auto exit_door = display_room(rand, grid, room_network[room_id],
-                                      main_win, room_view, info_view, font,
-                                      player_pos, "Room " + to_string(room_id));
+        auto exit_door =
+            display_room(grid, room_network[room_id], main_win, room_view,
+                         info_view, player_pos, "Room " + to_string(room_id));
+        nc::delwin(room_view);
+        nc::delwin(info_view);
         if (!exit_door)
             break;
         latest_visited_room = room_id;
         room_id = room_network.at(room_id).at(*exit_door);
     }
+
+    nc::delwin(main_win);
+    nc::endwin();
 }
