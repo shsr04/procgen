@@ -1,4 +1,5 @@
 #include <SDL2/SDL_events.h>
+#include <SDL2/SDL_keycode.h>
 #include <_main.hpp>
 #include <chrono>
 #include <sdl_wrap.hpp>
@@ -170,38 +171,58 @@ struct moving_object {
     pair<sig, sig> vel;
 };
 
-optional<plane_coord> display_room(random_gen rand, layers grid,
-                                   map<plane_coord, sig> const &out_doors,
-                                   Window const &main_win,
-                                   SDL_Rect const &room_view,
-                                   SDL_Rect const &info_view, Font const &font,
-                                   plane_coord player_pos, string room_title) {
-    grid[1][player_pos] = tile::idents::player;
+struct specimen {
+    struct status_bits {
+        static sig const normal = 0b0, dead = 0b1;
+        status_bits() = delete;
+    };
+    sig status = status_bits::normal;
+    plane_coord pos;
+    sig life_points;
+};
+
+optional<specimen> display_room(random_gen rand, layers grid,
+                                map<plane_coord, sig> const &out_doors,
+                                Window const &main_win,
+                                SDL_Rect const &room_view,
+                                SDL_Rect const &info_view, Font const &font,
+                                specimen player, string room_title) {
+    grid[1][player.pos] = tile::idents::player;
     auto interaction_point = optional<plane_coord>();
     auto info_text = "--- " + room_title + "---";
     auto active_hazards = map<plane_coord, hazard>();
     auto moving_objects = vector<moving_object>();
-    sig life_points = 10;
     atomic<bool> hazard_ready = false;
     for (auto &c : grid[0]) {
-        if (ALL_HAZARDS.find(grid[0][c]) != ALL_HAZARDS.end())
+        if (ALL_HAZARDS.find(grid[0][c]) != ALL_HAZARDS.end()) {
             active_hazards[c] = ALL_HAZARDS.at(grid[0][c]);
+            active_hazards[c].tmp_time =
+                active_hazards[c].activation_time / rand.get(1, 4);
+        }
     }
     thread heartbeat;
+    atomic<bool> heartbeat_active = false;
+    scope_guard heartbeat_guard;
     if (!active_hazards.empty())
-        heartbeat = thread([&active_hazards, &hazard_ready] {
-            while (true) {
-                /// When a hazard is ready, its tmp_time is 0 and hazard_ready
-                /// is true.
-                this_thread::sleep_for(1s);
+        heartbeat = thread([&active_hazards, &hazard_ready, &heartbeat_active] {
+            heartbeat_active = true;
+            while (heartbeat_active) {
+                /// When a hazard is ready, its tmp_time is 0 and
+                /// hazard_ready is true.
                 if (hazard_ready)
                     continue;
+                this_thread::sleep_for(1s);
                 for (auto &[c, a] : active_hazards) {
                     a.tmp_time += 1s;
                     if (a.tmp_time == a.activation_time)
                         hazard_ready = true, a.tmp_time = 0s;
                 }
             }
+        }),
+        heartbeat_guard = scope_guard([&heartbeat, &heartbeat_active] {
+            heartbeat_active = false;
+            if (heartbeat.joinable())
+                heartbeat.join();
         });
 
     while (true) {
@@ -209,23 +230,33 @@ optional<plane_coord> display_room(random_gen rand, layers grid,
         print_grid(grid, ALL_TILES, out_doors, main_win, room_view, font);
         font.renderToSurface(info_text, color_idents::WHITE_ON_BLACK, main_win,
                              info_view.x, info_view.y);
+        font.renderToSurface("HP: " + to_string(player.life_points) +
+                                 "    XP: 0",
+                             color_idents::WHITE_ON_BLACK, main_win,
+                             info_view.x, info_view.y + 1);
         main_win.updateWindow();
-        if (life_points <= 0) {
-            throw "You are DEAD";
+        if (player.life_points <= 0) {
+            main_win.clear({75, 50, 50});
+            font.renderToSurface("YOU ARE DEAD -- PRESS RETURN",
+                                 color_idents::RED_ON_BLACK, main_win,
+                                 room_view.x + 1, room_view.y + 10);
+            player.status = specimen::status_bits::dead;
+            main_win.updateWindow();
+            return player;
         }
         SDL_Event event;
         SDL_WaitEventTimeout(&event, 1000 / FRAMES_PER_SECOND);
-        auto prev = player_pos;
+        auto prev = player.pos;
         if (event.type == SDL_KEYDOWN) {
             auto key = event.key.keysym.sym;
             if (key == SDLK_w)
-                --player_pos.y();
+                --player.pos.y();
             else if (key == SDLK_s)
-                ++player_pos.y();
+                ++player.pos.y();
             else if (key == SDLK_a)
-                --player_pos.x();
+                --player.pos.x();
             else if (key == SDLK_d)
-                ++player_pos.x();
+                ++player.pos.x();
             else if (key == SDLK_e && interaction_point) {
                 auto effect =
                     interact_with(rand, grid[0], ALL_TILES, *interaction_point);
@@ -233,12 +264,16 @@ optional<plane_coord> display_room(random_gen rand, layers grid,
                 continue;
             } else if (key == SDLK_q)
                 return {};
+            else if (key == SDLK_z)
+                player.life_points--;
         }
 
         if (hazard_ready) {
             for (auto &[c, a] : active_hazards) {
                 pair<sig, sig> vel = {rand.get(-1, 1), rand.get(-1, 1)};
                 if (a.tmp_time > 0s)
+                    continue;
+                if ((vel.first | vel.second) == 0)
                     continue;
                 if (a.behavior & hazard::behavior_bits::catapult) {
                     moving_objects.push_back({*a.employed_tiles, c, vel});
@@ -247,32 +282,32 @@ optional<plane_coord> display_room(random_gen rand, layers grid,
             hazard_ready = false;
         }
 
-        if (player_pos != prev) {
-            if (tile_satisfies_flags(grid[0], ALL_TILES, player_pos,
+        if (player.pos != prev) {
+            if (tile_satisfies_flags(grid[0], ALL_TILES, player.pos,
                                      tile::flag_bits::interactable))
-                interaction_point = player_pos;
+                interaction_point = player.pos;
             else
                 interaction_point = {};
 
-            if (!tile_satisfies_flags(grid[0], ALL_TILES, player_pos,
+            if (!tile_satisfies_flags(grid[0], ALL_TILES, player.pos,
                                       tile::flag_bits::passable)) {
-                player_pos = prev;
+                player.pos = prev;
                 if (!interaction_point)
                     continue;
             }
 
-            if (tile_satisfies_flags(grid[0], ALL_TILES, player_pos,
+            if (tile_satisfies_flags(grid[0], ALL_TILES, player.pos,
                                      tile::flag_bits::transporting)) {
-                return player_pos;
+                return player;
             }
 
             auto described_coord =
-                interaction_point ? *interaction_point : player_pos;
+                interaction_point ? *interaction_point : player.pos;
             info_text =
                 get_description(grid[0], ALL_TILES, out_doors, described_coord);
 
             grid[1][prev] = tile::idents::nil;
-            grid[1][player_pos] = tile::idents::player;
+            grid[1][player.pos] = tile::idents::player;
         }
 
         if (!moving_objects.empty()) {
@@ -281,10 +316,10 @@ optional<plane_coord> display_room(random_gen rand, layers grid,
                 pos.x() = pos.x() + vel.first;
                 pos.y() = pos.y() + vel.second;
                 grid[1][pos] = tile;
-                if (pos == player_pos) {
+                if (pos == player.pos) {
+                    grid[1][pos] = tile::idents::player;
                     auto damage = *ALL_HAZARDS.at(tile).damage;
-                    life_points -= damage;
-                    info_text = ">> LOST " + to_string(damage) + " HP!";
+                    player.life_points -= damage;
                 }
             }
             moving_objects.erase(
@@ -315,6 +350,7 @@ int main() {
     auto room_id = sig(0);
     auto latest_visited_room = optional<sig>();
     auto next_free_room = sig(1);
+    specimen player = {.pos = {0, 0, 0, 0}, .life_points = 10};
     map<sig, map<plane_coord, sig>> room_network;
     while (true) {
         room_network[room_id] = {};
@@ -329,16 +365,16 @@ int main() {
         auto room_view =
             SDL_Rect{.x = 0, .y = 0, .w = int(grid_size), .h = int(grid_size)};
         auto info_view =
-            SDL_Rect{.x = 0, .y = room_view.h + 1, .w = window_size, .h = 1};
+            SDL_Rect{.x = 0, .y = room_view.h + 1, .w = window_size, .h = 2};
 
         main_win.updateWindow();
         auto &&[grid, doors] = build_room(rand, grid_size);
-        auto player_pos = plane_coord(grid[0].size() / 2, grid[0].size() / 2,
-                                      grid[0].size() - 1, 0);
+        player.pos = plane_coord(grid[0].size() / 2, grid[0].size() / 2,
+                                 grid[0].size() - 1, 0);
         if (latest_visited_room) {
             room_network[room_id][doors.back()] = *latest_visited_room;
             grid[0][doors.back()] = tile::idents::sliding_door;
-            player_pos = *find_adjoining_tile(grid[0], ALL_TILES, doors.back(),
+            player.pos = *find_adjoining_tile(grid[0], ALL_TILES, doors.back(),
                                               tile::idents::doorway_sigil);
             doors.pop_back();
         }
@@ -346,12 +382,20 @@ int main() {
             room_network.at(room_id)[c_door] = next_free_room;
             next_free_room++;
         }
-        auto exit_door = display_room(rand, grid, room_network[room_id],
-                                      main_win, room_view, info_view, font,
-                                      player_pos, "Room " + to_string(room_id));
-        if (!exit_door)
+        auto o_player = display_room(
+            rand, grid, room_network[room_id], main_win, room_view, info_view,
+            font, move(player), "Room " + to_string(room_id));
+        if (!o_player)
             break;
+        player = *o_player;
+        if (player.status == specimen::status_bits::dead) {
+            SDL_Event event;
+            while (!SDL_PollEvent(&event) || event.type != SDL_KEYDOWN ||
+                   event.key.keysym.sym != SDLK_RETURN)
+                ;
+            break;
+        }
         latest_visited_room = room_id;
-        room_id = room_network.at(room_id).at(*exit_door);
+        room_id = room_network.at(room_id).at(player.pos);
     }
 }

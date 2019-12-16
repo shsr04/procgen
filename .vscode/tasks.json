@@ -4,13 +4,38 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Generator",
+            "label": "Build Generator",
             "type": "shell",
-            "command": "make generator && ./generator",
+            "command": "make generator",
             "group": {
                 "kind": "build",
                 "isDefault": true
             },
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "focus": false,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": false
+            }
+        },
+        {
+            "label": "Run Generator",
+            "type": "shell",
+            "command": "make generator && ./generator",
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "focus": false,
+                "panel": "dedicated",
+                "showReuseMessage": false,
+                "clear": false
+            }
         }
     ]
 }

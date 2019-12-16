@@ -1,7 +1,7 @@
-CompileFlags = -std=c++17 -g -O0 -stdlib=libc++ -Werror -Wconversion -Wmove 
+CompileFlags = -std=c++17 -g -O0 -stdlib=libc++ -Werror -Wconversion -Wmove -fno-exceptions -fno-rtti -ferror-limit=1
 IncludeFlags = -I third-party -I core
 LibFlags =
-Libs = -lSDL2 -lSDL2_ttf -pthread
+Libs = -lSDL2 -lSDL2_ttf -lpthread
 DefFlags = 
 
 ifeq ($(bigint),1)
