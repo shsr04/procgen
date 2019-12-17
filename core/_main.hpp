@@ -25,4 +25,6 @@ size_t operator""_s(unsigned long long p) { return static_cast<size_t>(p); }
 #include <_graph.hpp>
 #include <_iota.hpp>
 #include <_random.hpp>
+#include <_range.hpp>
 #include <_scope.hpp>
+namespace r = hacked_ranges;

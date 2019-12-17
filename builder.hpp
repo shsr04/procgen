@@ -93,6 +93,6 @@ pair<layers, vector<plane_coord>> build_room(random_gen &rand, sig grid_size) {
                             static_cast<sig>(rand.get(2, 6)));
     return {layers{replace_coords(move(bottom_grid), chest_coords,
                                   tile::idents::chest),
-                   empty_grid(grid_size)},
+                   empty_grid(grid_size),empty_grid(grid_size)},
             move(door_coords)};
 }

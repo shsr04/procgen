@@ -28,6 +28,9 @@ struct tile {
         player,
         dart_trap,
         propelled_dart,
+        bomb_trap,
+        propelled_bomb,
+        blazing_fire,
     };
     char symbol;
     sig flags;
@@ -43,6 +46,7 @@ vector<pair<tile::idents, double>> const ROOM_TILE_WEIGHTS = {
     {tile::idents::decorated_stone_flooring, 30},
     {tile::idents::stone_pillar, 2},
     {tile::idents::dart_trap, 2},
+    {tile::idents::bomb_trap, 2},
 };
 
 map<tile::idents, tile> const ALL_TILES = {
@@ -101,6 +105,13 @@ map<tile::idents, tile> const ALL_TILES = {
          "A devious trap",
          color_idents::WHITE_ON_BLACK,
      }},
+    {tile::idents::bomb_trap,
+     {
+         '#',
+         tile::flag_bits::none,
+         "A devious trap",
+         color_idents::GRAY_ON_BLACK,
+     }},
     {tile::idents::sliding_door,
      {
          '#',
@@ -126,7 +137,21 @@ map<tile::idents, tile> const ALL_TILES = {
      {
          '`',
          tile::flag_bits::damaging,
-         "",
+         "Shot by dart traps",
          color_idents::RED_ON_BLACK,
+     }},
+    {tile::idents::propelled_bomb,
+     {
+         '@',
+         tile::flag_bits::damaging,
+         "Lobbed by bomb traps",
+         color_idents::GRAY_ON_BLACK,
+     }},
+    {tile::idents::blazing_fire,
+     {
+         '~',
+         tile::flag_bits::damaging,
+         "Fire produced by explosions",
+         color_idents::ORANGE_ON_BLACK,
      }},
 };

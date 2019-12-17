@@ -10,10 +10,10 @@ struct scope_guard {
     scope_guard(scope_guard const &) = delete;
     scope_guard &operator=(scope_guard const &) = delete;
     scope_guard(scope_guard &&) = delete;
-    scope_guard &operator=(scope_guard &&p) {
-        p.active_ = false;
+    scope_guard &operator=(scope_guard &&p) = delete;
+
+    void assign(function<void(void)> f) {
         active_ = true;
-        f_ = move(p.f_);
-        return *this;
+        f_ = move(f);
     }
 };

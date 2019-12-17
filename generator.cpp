@@ -1,11 +1,8 @@
-#include <SDL2/SDL_events.h>
-#include <SDL2/SDL_keycode.h>
 #include <_main.hpp>
-#include <chrono>
 #include <sdl_wrap.hpp>
-#include <thread>
 
 #include "builder.hpp"
+#include "color.hpp"
 #include "coord.hpp"
 #include "grid.hpp"
 #include "tile.hpp"
@@ -124,6 +121,10 @@ void print_grid(layers const &layers, map<tile::idents, tile> const &tiles,
         for (auto &c : grid) {
             if (grid[c] == tile::idents::nil)
                 continue;
+            if (tiles.find(grid[c]) == tiles.end()) {
+                font.renderToSurface("?", color_idents::WHITE_ON_BLACK, win,
+                                     rect.x + int(c.x()), rect.y + int(c.y()));
+            }
             auto tile = tiles.at(grid[c]);
             font.renderToSurface(
                 string({*get_tile_symbol(grid, tiles, doors, c)}), tile.color,
@@ -136,32 +137,55 @@ struct hazard {
         dart_trap,
     };
     struct behavior_bits {
-        static sig const damage = 0b1, catapult = 0b10, blaze = 0b100;
+        static sig const damage = 0b1, sling = 0b10, blaze = 0b100,
+                         lob = 0b1000;
     };
-    tile::idents tile; // needed?
     sig behavior;
     chrono::seconds activation_time;
     optional<tile::idents> employed_tiles;
 
     optional<sig> damage;
+    optional<sig> energy;
     chrono::seconds tmp_time = 0s; // used to count up
 };
 
 map<tile::idents, hazard> ALL_HAZARDS = {
     {tile::idents::dart_trap,
      {
-         tile::idents::dart_trap,
-         hazard::behavior_bits::catapult,
-         5s,
-         tile::idents::propelled_dart,
+         .behavior = hazard::behavior_bits::sling,
+         .activation_time = 3s,
+         .employed_tiles = tile::idents::propelled_dart,
+     }},
+    {tile::idents::bomb_trap,
+     {
+         .behavior = hazard::behavior_bits::lob,
+         .activation_time = 4s,
+         .employed_tiles = tile::idents::propelled_bomb,
      }},
     {tile::idents::propelled_dart,
      {
-         tile::idents::propelled_dart,
-         hazard::behavior_bits::damage,
-         -1s,
-         {},
-         5,
+         .behavior = hazard::behavior_bits::damage,
+         .activation_time = -1s,
+         .employed_tiles = {},
+         .damage = 5,
+         .energy = 10,
+     }},
+    {tile::idents::propelled_bomb,
+     {
+         .behavior =
+             hazard::behavior_bits::damage | hazard::behavior_bits::blaze,
+         .activation_time = 3s,
+         .employed_tiles = tile::idents::blazing_fire,
+         .damage = 3,
+         .energy = 4,
+     }},
+    {tile::idents::blazing_fire,
+     {
+         .behavior = hazard::behavior_bits::damage,
+         .activation_time = -1s,
+         .employed_tiles = {},
+         .damage = 20,
+         .energy = 3,
      }},
 };
 
@@ -169,6 +193,7 @@ struct moving_object {
     tile::idents tile;
     plane_coord pos;
     pair<sig, sig> vel;
+    sig energy;
 };
 
 struct specimen {
@@ -207,8 +232,8 @@ optional<specimen> display_room(random_gen rand, layers grid,
         heartbeat = thread([&active_hazards, &hazard_ready, &heartbeat_active] {
             heartbeat_active = true;
             while (heartbeat_active) {
-                /// When a hazard is ready, its tmp_time is 0 and
-                /// hazard_ready is true.
+                /// hazard_ready is set when a hazard's tmp_time has become 0.
+                /// If it is still set here, we wait.
                 if (hazard_ready)
                     continue;
                 this_thread::sleep_for(1s);
@@ -219,7 +244,7 @@ optional<specimen> display_room(random_gen rand, layers grid,
                 }
             }
         }),
-        heartbeat_guard = scope_guard([&heartbeat, &heartbeat_active] {
+        heartbeat_guard.assign([&heartbeat, &heartbeat_active] {
             heartbeat_active = false;
             if (heartbeat.joinable())
                 heartbeat.join();
@@ -270,13 +295,30 @@ optional<specimen> display_room(random_gen rand, layers grid,
 
         if (hazard_ready) {
             for (auto &[c, a] : active_hazards) {
-                pair<sig, sig> vel = {rand.get(-1, 1), rand.get(-1, 1)};
                 if (a.tmp_time > 0s)
                     continue;
-                if ((vel.first | vel.second) == 0)
-                    continue;
-                if (a.behavior & hazard::behavior_bits::catapult) {
-                    moving_objects.push_back({*a.employed_tiles, c, vel});
+                if (a.behavior & (hazard::behavior_bits::sling |
+                                  hazard::behavior_bits::lob)) {
+                    // pair<sig, sig> vel = {rand.get(-1, 1), rand.get(-1, 1)};
+                    auto v_x = sig(player.pos.x()) - sig(c.x()),
+                         v_y = sig(player.pos.y()) - sig(c.y()),
+                         v_max = max(abs(v_x), abs(v_y));
+                    pair<sig, sig> vel = {v_x / v_max, v_y / v_max};
+                    auto energy = *ALL_HAZARDS.at(*a.employed_tiles).energy;
+                    if ((vel.first | vel.second) == 0) // misfire
+                        continue;
+                    moving_objects.push_back(
+                        {*a.employed_tiles, c, vel, energy});
+                }
+                if (a.behavior & hazard::behavior_bits::blaze) {
+                    grid[2][c] = tile::idents::nil;
+                    auto energy = *ALL_HAZARDS.at(*a.employed_tiles).energy;
+                    vector<pair<sig, sig>> vels = {{0, -2}, {1, -1}, {2, 0},
+                                                   {1, 1},  {0, 2},  {-1, 1},
+                                                   {-2, 0}, {-1, -1}};
+                    for (auto &vel : vels)
+                        moving_objects.push_back(
+                            {*a.employed_tiles, c, vel, energy});
                 }
             }
             hazard_ready = false;
@@ -311,28 +353,59 @@ optional<specimen> display_room(random_gen rand, layers grid,
         }
 
         if (!moving_objects.empty()) {
-            for (auto &[tile, pos, vel] : moving_objects) {
-                grid[1][pos] = tile::idents::nil;
-                pos.x() = pos.x() + vel.first;
-                pos.y() = pos.y() + vel.second;
-                grid[1][pos] = tile;
-                if (pos == player.pos) {
-                    grid[1][pos] = tile::idents::player;
-                    auto damage = *ALL_HAZARDS.at(tile).damage;
-                    player.life_points -= damage;
+            for (auto &[tile, pos, vel, energy] : moving_objects) {
+                auto v_x = abs(vel.first), v_y = abs(vel.second);
+                grid[2][pos] = tile::idents::nil;
+                while ((v_x > 0 || v_y > 0) && energy > 0) {
+                    energy--;
+                    if (v_x > 0) {
+                        if (vel.first > 0)
+                            ++pos.x();
+                        else if (vel.first < 0)
+                            --pos.x();
+                        v_x--;
+                    }
+                    if (v_y > 0) {
+                        if (vel.second > 0)
+                            ++pos.y();
+                        else if (vel.second < 0)
+                            --pos.y();
+                        v_y--;
+                    }
+
+                    if (pos == player.pos) {
+                        auto damage = *ALL_HAZARDS.at(tile).damage;
+                        player.life_points -= damage;
+                        energy = 0;
+                    }
+                    if (!tile_satisfies_flags(grid[0], ALL_TILES, pos,
+                                              tile::flag_bits::passable)) {
+                        energy = 0;
+                    }
+                }
+                grid[2][pos] = tile;
+                if (energy <= 0) {
+                    if (ALL_HAZARDS.find(tile) != ALL_HAZARDS.end()) {
+                        if (ALL_HAZARDS.at(tile).behavior &
+                            hazard::behavior_bits::blaze) {
+                            /// produce a hazardous effect on dissipation
+                            active_hazards[pos] = ALL_HAZARDS.at(tile);
+                        } else
+                            grid[2][pos] = tile::idents::nil;
+                    }
                 }
             }
-            moving_objects.erase(
-                remove_if(begin(moving_objects), end(moving_objects),
-                          [&grid](moving_object &m) {
-                              if (m.pos.x().limit_reached() ||
-                                  m.pos.y().limit_reached()) {
-                                  grid[1][m.pos] = tile::idents::nil;
-                                  return true;
-                              }
-                              return false;
-                          }),
-                end(moving_objects));
+            moving_objects.erase(remove_if(begin(moving_objects),
+                                           end(moving_objects),
+                                           [](moving_object &m) {
+                                               if ((m.energy <= 0) ||
+                                                   m.pos.x().limit_reached() ||
+                                                   m.pos.y().limit_reached()) {
+                                                   return true;
+                                               }
+                                               return false;
+                                           }),
+                                 end(moving_objects));
         }
     }
 }
@@ -350,7 +423,7 @@ int main() {
     auto room_id = sig(0);
     auto latest_visited_room = optional<sig>();
     auto next_free_room = sig(1);
-    specimen player = {.pos = {0, 0, 0, 0}, .life_points = 10};
+    specimen player = {.pos = {0, 0, 0, 0}, .life_points = 100};
     map<sig, map<plane_coord, sig>> room_network;
     while (true) {
         room_network[room_id] = {};
