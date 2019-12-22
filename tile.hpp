@@ -24,6 +24,8 @@ struct tile {
         stone_flooring,
         cracked_stone_flooring,
         decorated_stone_flooring,
+        burned_rubble_pile,
+        burned_rubble_piece,
         stone_pillar,
         player,
         dart_trap,
@@ -73,6 +75,19 @@ map<tile::idents, tile> const ALL_TILES = {
          '~',
          tile::flag_bits::passable,
          "decorated stone floor",
+     }},
+    {tile::idents::burned_rubble_pile,
+     {
+         '"',
+         tile::flag_bits::passable,
+         "burned stone pile",
+         color_idents::GRAY_ON_BLACK,
+     }},
+    {tile::idents::burned_rubble_piece,
+     {
+         '\'',
+         tile::flag_bits::passable,
+         "burned piece of rubble",
      }},
     {tile::idents::stone_pillar,
      {
